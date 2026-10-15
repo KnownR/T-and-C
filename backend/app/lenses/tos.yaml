@@ -1,0 +1,45 @@
+id: tos
+name: Terms of Service
+version: 1
+description: UNFAIR-ToS benchmark rubric with 8 standard unfair clause categories.
+
+categories:
+  - id: arbitration
+    name: Mandatory Arbitration & Class Action Waiver
+    question: Does the clause force disputes into binding arbitration or waive the user's right to participate in a class action?
+    default_severity: red
+
+  - id: unilateral_change
+    name: Unilateral Change of Terms
+    question: Does the service provider reserve the right to amend or change terms, fees, or features at any time without prior notice?
+    default_severity: red
+
+  - id: content_removal
+    name: Discretionary Content Removal
+    question: Does the provider have broad, discretionary power to remove, edit, or block user content without explanation or recourse?
+    default_severity: yellow
+
+  - id: jurisdiction
+    name: Jurisdiction Selection
+    question: Does the clause mandate that any litigation or dispute be heard in a specific, often foreign or inconvenient forum or court?
+    default_severity: yellow
+
+  - id: choice_of_law
+    name: Choice of Governing Law
+    question: Does the contract specify a governing law that may deprive consumers of their local statutory protections?
+    default_severity: info
+
+  - id: limitation_of_liability
+    name: Limitation of Liability
+    question: Does the provider disclaim all consequential/indirect damages or cap their maximum total liability to an unreasonably small amount (or fees paid)?
+    default_severity: red
+
+  - id: unilateral_termination
+    name: Unilateral Termination
+    question: Can the provider suspend or terminate the user's account or access immediately and at its sole discretion without notice or cause?
+    default_severity: red
+
+  - id: contract_by_using
+    name: Contract Formed by Usage
+    question: Does the document claim that merely visiting, browsing, or accessing the website/app binds the user to the contract?
+    default_severity: yellow

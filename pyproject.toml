@@ -1,0 +1,10 @@
+[project]
+name = "what-did-i-agree-to"
+version = "0.1.0"
+description = "Local-first Terms of Service analyzer with verified citations"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+pythonpath = [".", "backend"]
