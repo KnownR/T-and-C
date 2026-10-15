@@ -81,6 +81,42 @@ PDF_SPECS = {
             ("Clause 4. Governing Law and Arbitration", "This Agreement is governed by the laws of California. Any dispute shall be decided by binding arbitration in Santa Clara."),
         ],
     },
+    "hard_mode_tos.pdf": {
+        "title": "Acme Cloud Enterprise Terms of Service",
+        "preamble": "Please read these enterprise terms carefully before accessing Acme Cloud services. By accessing or using the services, you agree to be bound by all provisions set forth below. If you do not agree, do not use the services.",
+        "sections_page_1": [
+            (
+                "Section 1. Account Access and Security",
+                "Customers must maintain administrative account credentials securely. These terms are effective January 1, 2026. As noted in Section 4.2 below, you must notify us immediately of any security incident.",
+            ),
+            (
+                "2. Service Availability and Modifications",
+                "Acme reserves the right to modify API features with thirty days prior notice.",
+            ),
+            (
+                "Clause 3.2 Confidential Information",
+                "Recipient shall hold all Confidential Information in confidence and shall not disclose it except: (a) to employees with a need to know; (b) as required by applicable law or valid subpoena; or (c) with prior written consent of the disclosing party.",
+            ),
+        ],
+        "sections_page_2": [
+            (
+                "Section 4. Limitation of Liability",
+                "In no event shall either party's aggregate liability exceed the total amounts paid during the prior twelve months.",
+            ),
+            (
+                "Appendix A. Service Level Agreement",
+                "This Service Level Agreement governs the availability metrics for Acme Cloud services.",
+            ),
+            (
+                "1. Uptime Commitment",
+                "Acme guarantees 99.9% uptime during each calendar month.",
+            ),
+            (
+                "2. Service Credits",
+                "If availability falls below the commitment, customer is entitled to a ten percent credit.",
+            ),
+        ],
+    },
 }
 
 
@@ -133,10 +169,17 @@ def generate_tos_pdf(filename: str, spec: dict) -> Path:
     story.append(Paragraph(spec["title"], title_style))
     story.append(Spacer(1, 8))
 
+    # Optional Preamble paragraph
+    if spec.get("preamble"):
+        story.append(Paragraph(spec["preamble"], body_style))
+        story.append(Spacer(1, 4))
+
     # Page 1 Sections
     for heading, body in spec["sections_page_1"]:
-        story.append(Paragraph(heading, heading_style))
+        if heading:
+            story.append(Paragraph(heading, heading_style))
         story.append(Paragraph(body, body_style))
+
 
     # Page Break to ensure multi-page fixture
     story.append(PageBreak())

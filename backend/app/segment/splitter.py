@@ -13,6 +13,8 @@ from statistics import median
 from backend.app.db import ClauseRecord
 
 NUMBERING_PATTERNS = [
+    # Appendix A / Appendix 1
+    re.compile(r"^(Appendix\s+[0-9a-zA-Z\.\-]+[:\.]?)(\s+(.*))?$", re.IGNORECASE),
     # Section 4.2 / Section 1 / Section IV
     re.compile(r"^(Section\s+[0-9a-zA-Z\.\-]+[:\.]?)(\s+(.*))?$", re.IGNORECASE),
     # Clause 7 / Clause 1.2
@@ -95,6 +97,7 @@ def split_document_into_clauses(
     # Step 1: Scan spans and identify clause boundary indices
     # Each boundary is (span_index, label, heading)
     boundaries: list[tuple[int, Optional[str], Optional[str]]] = []
+    first_content_span_idx: Optional[int] = None
 
     for i, span in enumerate(spans):
         text = span.get("text", "").strip()
@@ -105,19 +108,37 @@ def split_document_into_clauses(
         if i == 0 and is_document_title_span(span, max_size, median_size):
             continue
 
+        if first_content_span_idx is None:
+            first_content_span_idx = i
+
         # Check explicit numbering pattern
         matched = match_numbering_pattern(text)
         if matched:
             label, rest_heading = matched
-            # If rest_heading is empty and next span on same line is bold/heading, take it
-            heading = rest_heading
-            boundaries.append((i, label, heading))
+            is_heading_style = is_heading_span(span, median_size)
+
+            # Sub-list guard: (a), (b) inside clause bodies (e.g. unbold, inline) must not trigger a clause boundary
+            if label.startswith("("):
+                if not is_heading_style and not (rest_heading and rest_heading[0].isupper() and not rest_heading.endswith(";")):
+                    continue
+
+            # Mid-sentence reference guard: Section 4.2 followed by lowercase or sentence continuation
+            if not is_heading_style and rest_heading:
+                first_word = rest_heading.split()[0].lower()
+                if first_word in ("below", "above", "herein", "hereof", "and", "or", "of") or "," in rest_heading.split()[0]:
+                    continue
+
+            boundaries.append((i, label, rest_heading))
             continue
 
         # Check unnumbered bold/large font heading
         if is_heading_span(span, median_size):
-            # Verify it is not preceded by another span on the same clause line
             boundaries.append((i, None, text))
+
+    # Prepend unnumbered preamble if content exists before the first section boundary
+    if boundaries and first_content_span_idx is not None and boundaries[0][0] > first_content_span_idx:
+        boundaries.insert(0, (first_content_span_idx, None, "Preamble"))
+
 
     # Step 2: Fallback if zero structure detected (pure unstructured prose)
     if not boundaries:

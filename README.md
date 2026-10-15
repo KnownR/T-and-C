@@ -25,15 +25,17 @@ No finding is ever displayed in the UI without a verified quote matching the ori
 ## Evaluation Results
 
 ### Clause Segmentation Boundary Accuracy (Phase 2)
-Evaluated across 5 hand-split multi-page Terms of Service benchmark documents:
+Evaluated across 6 hand-split multi-page Terms of Service benchmark documents (including adversarial edge cases):
 - `cloud_service_tos.pdf` (6 clauses): **100.00%** F1
 - `streaming_platform_tos.pdf` (6 clauses): **100.00%** F1
 - `social_network_tos.pdf` (6 clauses): **100.00%** F1
 - `ecommerce_marketplace_tos.pdf` (7 clauses): **100.00%** F1
 - `saas_subscription_tos.pdf` (6 clauses): **100.00%** F1
-- **Overall Boundary Precision:** 100.00% (31/31)
-- **Overall Boundary Recall:** 100.00% (31/31)
+- `hard_mode_tos.pdf` (8 clauses): **100.00%** F1 (Unnumbered preamble, inline dates/cross-references, nested sub-lists, appendix restart)
+- **Overall Boundary Precision:** 100.00% (39/39)
+- **Overall Boundary Recall:** 100.00% (39/39)
 - **Overall Boundary F1 / Accuracy:** **100.00%**
+
 
 ## Quickstart
 
