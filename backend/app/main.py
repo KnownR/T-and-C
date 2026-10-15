@@ -7,13 +7,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backend.app.db import (
+    ClauseRecord,
     DocumentRecord,
+    get_clauses,
     get_document,
     init_db,
+    save_clauses,
     save_document,
 )
 from backend.app.ingest.pdf import extract_spans_from_pdf
 from backend.app.ingest.text import extract_spans_from_text
+from backend.app.segment.splitter import split_document_into_clauses
 
 
 @asynccontextmanager
@@ -26,7 +30,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="What Did I Agree To? API",
     description="Local-first Terms of Service analyzer with deterministic verified citations.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -49,6 +53,19 @@ class SpanModel(BaseModel):
     is_bold: bool = False
 
 
+class ClauseModel(BaseModel):
+    id: str
+    document_id: str
+    ordinal: int
+    label: Optional[str] = None
+    heading: Optional[str] = None
+    text: str
+    page: Optional[int] = 1
+    bboxes: list[list[float]] = Field(default_factory=list)
+    char_start: Optional[int] = None
+    char_end: Optional[int] = None
+
+
 class DocumentResponse(BaseModel):
     id: str
     filename: Optional[str] = None
@@ -57,6 +74,7 @@ class DocumentResponse(BaseModel):
     page_count: int
     raw_text: str
     spans: list[SpanModel] = Field(default_factory=list)
+    clauses: list[ClauseModel] = Field(default_factory=list)
     status: str
     created_at: str
 
@@ -66,7 +84,7 @@ def health_check() -> dict[str, Any]:
     return {
         "status": "ok",
         "app": "what-did-i-agree-to",
-        "phase": 1,
+        "phase": 2,
     }
 
 
@@ -81,7 +99,7 @@ async def create_document(
     text: Optional[str] = Form(None),
     filename: Optional[str] = Form(None),
 ) -> DocumentResponse:
-    """Upload a document (PDF file or pasted text) for ingestion and span extraction."""
+    """Upload a document (PDF file or pasted text) for ingestion, span extraction, and clause segmentation."""
     content_type = request.headers.get("content-type", "")
 
     if "application/json" in content_type:
@@ -115,18 +133,46 @@ async def create_document(
             detail="Must provide either a file upload ('file') or text content ('text').",
         )
 
+    # 1. Save document record
     record = DocumentRecord(**parsed)
-    saved = save_document(record)
-    return DocumentResponse(**saved.model_dump())
+    saved_doc = save_document(record)
+
+    # 2. Segment document into clauses deterministically
+    clauses = split_document_into_clauses(
+        spans=record.spans,
+        raw_text=record.raw_text,
+        document_id=record.id,
+    )
+    saved_clauses = save_clauses(clauses)
+
+    doc_data = saved_doc.model_dump()
+    doc_data["clauses"] = [c.model_dump() for c in saved_clauses]
+    return DocumentResponse(**doc_data)
 
 
 @app.get("/api/documents/{doc_id}", response_model=DocumentResponse)
 def get_document_endpoint(doc_id: str) -> DocumentResponse:
-    """Retrieve document metadata and extracted spans by ID."""
+    """Retrieve document metadata, extracted spans, and segmented clauses by ID."""
     doc = get_document(doc_id)
     if not doc:
         raise HTTPException(
             status_code=404,
             detail=f"Document with ID '{doc_id}' not found.",
         )
-    return DocumentResponse(**doc.model_dump())
+    clauses = get_clauses(doc_id)
+    doc_data = doc.model_dump()
+    doc_data["clauses"] = [c.model_dump() for c in clauses]
+    return DocumentResponse(**doc_data)
+
+
+@app.get("/api/documents/{doc_id}/clauses", response_model=list[ClauseModel])
+def get_document_clauses_endpoint(doc_id: str) -> list[ClauseModel]:
+    """Retrieve only the segmented clauses for a document."""
+    doc = get_document(doc_id)
+    if not doc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document with ID '{doc_id}' not found.",
+        )
+    clauses = get_clauses(doc_id)
+    return [ClauseModel(**c.model_dump()) for c in clauses]

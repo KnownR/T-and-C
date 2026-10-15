@@ -54,10 +54,38 @@ PDF_SPECS = {
             ("6. Severability and Complete Agreement", "If any provision of these Terms is found unenforceable, that provision will be severed and the remaining provisions will continue in full force and effect."),
         ],
     },
+    "ecommerce_marketplace_tos.pdf": {
+        "title": "MarketHub Marketplace Terms of Service",
+        "sections_page_1": [
+            ("Section 1. Marketplace Participation", "MarketHub operates an online marketplace connecting buyers and independent third-party sellers."),
+            ("1.1 Buyer Obligations", "Buyers agree to submit valid payment information and acknowledge that all transactions are final once processed."),
+            ("(a) Order Cancellation", "Orders may only be cancelled prior to dispatch by the seller at their sole discretion."),
+            ("(b) Returns and Refunds", "Refund requests must be initiated within fourteen (14) days of confirmed delivery."),
+        ],
+        "sections_page_2": [
+            ("Section 2. Intellectual Property Rights", "All trademarks, logos, service marks, and trade names displayed on MarketHub are proprietary."),
+            ("Clause 3. Unilateral Termination and Account Deletion", "MarketHub may suspend, restrict, or terminate your merchant or buyer account at any time without notice or liability for any conduct violating these terms."),
+            ("Clause 4. Limitation of Merchant Liability", "In no event shall MarketHub's liability to any merchant or buyer exceed the total commission earned on the disputed order."),
+        ],
+    },
+    "saas_subscription_tos.pdf": {
+        "title": "DevPulse Analytics Service Agreement",
+        "sections_page_1": [
+            ("1. Scope and Provision of Services", "DevPulse provides developer metrics and continuous integration monitoring as a cloud hosted service."),
+            ("1.1 License Grant and API Usage", "Subject to these terms, Customer is granted a non-exclusive, non-sublicensable right to access the API endpoints."),
+            ("1.2 Usage Limits and Fair Use", "DevPulse reserves the right to throttle or rate-limit API calls exceeding allocated monthly quotas."),
+        ],
+        "sections_page_2": [
+            ("Section 2. Fees, Invoicing, and Auto-Renewal", "Subscription tiers bill automatically on the first calendar day of each cycle. Fees are non-refundable."),
+            ("Clause 3. Confidentiality and Security", "Each party agrees to safeguard the other party's confidential data using reasonable commercial care."),
+            ("Clause 4. Governing Law and Arbitration", "This Agreement is governed by the laws of California. Any dispute shall be decided by binding arbitration in Santa Clara."),
+        ],
+    },
 }
 
 
 def generate_tos_pdf(filename: str, spec: dict) -> Path:
+
     out_path = FIXTURES_DIR / filename
     doc = SimpleDocTemplate(
         str(out_path),

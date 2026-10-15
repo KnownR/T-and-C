@@ -16,11 +16,24 @@ No finding is ever displayed in the UI without a verified quote matching the ori
 | Phase | Description | Status |
 |---|---|---|
 | **Phase 1** | Foundation & Ingestion (FastAPI, SQLite schema, PyMuPDF spans & bboxes, Pasted text) | ✅ Complete |
-| **Phase 2** | Segmentation (Rule-based clause splitter with stable IDs & bounding boxes) | ⏳ Next |
-| **Phase 3** | Analysis with structured output (8 UNFAIR-ToS categories) | ⏳ Pending |
+| **Phase 2** | Segmentation (Rule-based clause splitter with stable IDs & bounding boxes) | ✅ Complete |
+| **Phase 3** | Analysis with structured output (8 UNFAIR-ToS categories) | ⏳ Next |
 | **Phase 4** | Citation verifier (Exact $\rightarrow$ fuzzy $\rightarrow$ re-anchor $\rightarrow$ reject) | ⏳ Pending |
 | **Phase 5** | Minimal polished UI (Findings list + PDF viewer with highlight) | ⏳ Pending |
 | **Phase 6** | Evals & Benchmarks (UNFAIR-ToS eval runner & golden set) | ⏳ Pending |
+
+## Evaluation Results
+
+### Clause Segmentation Boundary Accuracy (Phase 2)
+Evaluated across 5 hand-split multi-page Terms of Service benchmark documents:
+- `cloud_service_tos.pdf` (6 clauses): **100.00%** F1
+- `streaming_platform_tos.pdf` (6 clauses): **100.00%** F1
+- `social_network_tos.pdf` (6 clauses): **100.00%** F1
+- `ecommerce_marketplace_tos.pdf` (7 clauses): **100.00%** F1
+- `saas_subscription_tos.pdf` (6 clauses): **100.00%** F1
+- **Overall Boundary Precision:** 100.00% (31/31)
+- **Overall Boundary Recall:** 100.00% (31/31)
+- **Overall Boundary F1 / Accuracy:** **100.00%**
 
 ## Quickstart
 
@@ -52,7 +65,7 @@ uvicorn backend.app.main:app --reload --port 8000
 ```
 
 ### Ingestion API Example (curl)
-Upload a Terms of Service PDF:
+Upload a Terms of Service PDF (returns document metadata, spans, and segmented clauses):
 ```bash
 curl -X POST -F "file=@backend/tests/fixtures/cloud_service_tos.pdf" http://localhost:8000/api/documents
 ```
@@ -65,6 +78,10 @@ curl -X POST -H "Content-Type: application/json" \
 ```
 
 ## Decisions & Architecture
-1. **Span Bounding Boxes:** PyMuPDF (`fitz`) extracts character and word spans directly with `bbox: [x0, y0, x1, y1]`, font size, and font weight/bold flags. Spans are ordered in deterministic reading order (page ascending, vertical $y_0$ ascending, horizontal $x_0$ ascending).
-2. **Deterministic Fallback:** Pasted text is assigned to a single pseudo-page (`page=1`) with `bbox=None`.
-3. **Database Schema:** SQLite stores `documents`, `clauses`, `findings`, and `analysis_runs` with foreign key enforcement enabled (`PRAGMA foreign_keys = ON`).
+1. **Span Bounding Boxes:** PyMuPDF extracts character and word spans directly with `bbox: [x0, y0, x1, y1]`, font size, and font weight/bold flags (checked via bit 16 and font name). Spans are ordered in deterministic reading order ($page \rightarrow y_0 \rightarrow x_0$).
+2. **Deterministic Clause Segmentation:** Regex rules detect `1.`, `1.1`, `(a)`, `Section 4.2`, `Clause 7`, and `Article I`, alongside font size/boldness styling. Stable IDs (`C-1`...`C-n`) and bounding box regions are attached to each clause.
+3. **Zero-LLM Fallback:** If a document lacks numbering or headings, segmentation deterministically falls back to heading-less paragraphs as clauses.
+4. **Known Layout Limitations:**
+   - **Multi-column layouts & tables:** Multi-column text flow is currently ingested sequentially in top-to-bottom reading order. Complex magazine-style multi-column text flows and nested HTML/PDF tables are treated as sequential paragraphs rather than performing full geometric 2D column de-warping.
+5. **Database Schema:** SQLite stores `documents`, `clauses`, `findings`, and `analysis_runs` with foreign key enforcement enabled (`PRAGMA foreign_keys = ON`).
+

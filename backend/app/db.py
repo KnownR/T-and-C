@@ -165,3 +165,84 @@ def get_document(doc_id: str, db_path: Optional[str] = None) -> Optional[Documen
         )
     finally:
         conn.close()
+
+
+class ClauseRecord(BaseModel):
+    id: str
+    document_id: str
+    ordinal: int
+    label: Optional[str] = None
+    heading: Optional[str] = None
+    text: str
+    page: Optional[int] = 1
+    bboxes: list[list[float]] = Field(default_factory=list)
+    char_start: Optional[int] = None
+    char_end: Optional[int] = None
+
+
+def save_clauses(
+    clauses: list[ClauseRecord], db_path: Optional[str] = None
+) -> list[ClauseRecord]:
+    """Save or update a list of clause records in SQLite."""
+    conn = get_db_connection(db_path)
+    try:
+        with conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO clauses (
+                    id, document_id, ordinal, label, heading, text, page, bboxes, char_start, char_end
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        c.id,
+                        c.document_id,
+                        c.ordinal,
+                        c.label,
+                        c.heading,
+                        c.text,
+                        c.page,
+                        json.dumps(c.bboxes),
+                        c.char_start,
+                        c.char_end,
+                    )
+                    for c in clauses
+                ],
+            )
+        return clauses
+    finally:
+        conn.close()
+
+
+def get_clauses(
+    document_id: str, db_path: Optional[str] = None
+) -> list[ClauseRecord]:
+    """Retrieve all clauses for a given document ordered by ordinal."""
+    conn = get_db_connection(db_path)
+    try:
+        cur = conn.execute(
+            """
+            SELECT id, document_id, ordinal, label, heading, text, page, bboxes, char_start, char_end
+            FROM clauses WHERE document_id = ? ORDER BY ordinal ASC
+            """,
+            (document_id,),
+        )
+        rows = cur.fetchall()
+        return [
+            ClauseRecord(
+                id=row["id"],
+                document_id=row["document_id"],
+                ordinal=row["ordinal"],
+                label=row["label"],
+                heading=row["heading"],
+                text=row["text"],
+                page=row["page"],
+                bboxes=json.loads(row["bboxes"] or "[]"),
+                char_start=row["char_start"],
+                char_end=row["char_end"],
+            )
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
