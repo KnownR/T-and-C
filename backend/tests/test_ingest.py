@@ -21,7 +21,7 @@ from backend.app.db import (
     get_document,
     DocumentRecord,
 )
-from backend.app.ingest.pdf import extract_spans_from_pdf
+from backend.app.ingest.pdf import extract_spans_from_pdf, is_span_bold
 from backend.app.ingest.text import extract_spans_from_text
 from backend.app.main import app
 
@@ -104,6 +104,85 @@ def test_pdf_extraction_detects_headings_by_font_size():
 
     assert title_span["font_size"] > body_span["font_size"]
     assert title_span["is_bold"] is True or "Bold" in title_span.get("font_name", "")
+
+
+def test_pdf_boldness_regression_flags_and_font_name(monkeypatch):
+    """Regression test for PyMuPDF span boldness detection:
+
+    Bit 4 (16) is bold. Bit 1 (2) is italic (not bold).
+    Fixture spans:
+    - flags=16 (bold, not italic) -> is_bold=True
+    - flags=2 (italic, not bold)  -> is_bold=False
+    - font_name='Helvetica-Bold' (flags=0) -> is_bold=True
+    Asserts only the first and third spans have is_bold=True.
+    """
+    # 1. Direct unit verification on is_span_bold
+    assert is_span_bold(flags=16, font_name="Helvetica") is True
+    assert is_span_bold(flags=2, font_name="Helvetica-Oblique") is False
+    assert is_span_bold(flags=0, font_name="Helvetica-Bold") is True
+
+    # 2. End-to-end span extraction verification through extract_spans_from_pdf
+    fixture_dict = {
+        "blocks": [
+            {
+                "type": 0,
+                "lines": [
+                    {
+                        "spans": [
+                            {
+                                "text": "Clause 1 (Bold Flag 16)",
+                                "bbox": [54.0, 54.0, 200.0, 70.0],
+                                "size": 12.0,
+                                "font": "Helvetica",
+                                "flags": 16,
+                            },
+                            {
+                                "text": "Clause 2 (Italic Flag 2)",
+                                "bbox": [54.0, 75.0, 200.0, 90.0],
+                                "size": 10.0,
+                                "font": "Helvetica-Oblique",
+                                "flags": 2,
+                            },
+                            {
+                                "text": "Clause 3 (Font-Named-Bold)",
+                                "bbox": [54.0, 95.0, 200.0, 110.0],
+                                "size": 12.0,
+                                "font": "Helvetica-Bold",
+                                "flags": 0,
+                            },
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+
+    class MockPage:
+        number = 0
+        def get_text(self, opt):
+            if opt == "dict":
+                return fixture_dict
+            return "Clause 1\nClause 2\nClause 3"
+
+    class MockDoc:
+        def __len__(self):
+            return 1
+        def __getitem__(self, idx):
+            return MockPage()
+        def close(self):
+            pass
+
+    monkeypatch.setattr("pymupdf.open", lambda *args, **kwargs: MockDoc())
+
+    doc_data = extract_spans_from_pdf(b"%PDF-mock", filename="mock_spans.pdf")
+    spans = doc_data["spans"]
+
+    assert len(spans) == 3
+    # Asserting only the first and third are is_bold=True:
+    assert spans[0]["is_bold"] is True, "flags=16 must be is_bold=True"
+    assert spans[1]["is_bold"] is False, "flags=2 (italic) must be is_bold=False"
+    assert spans[2]["is_bold"] is True, "font_name with 'Bold' must be is_bold=True"
+
 
 
 # -----------------------------------------------------------------------------

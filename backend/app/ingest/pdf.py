@@ -7,6 +7,11 @@ from typing import Any, Union
 import pymupdf
 
 
+def is_span_bold(flags: int, font_name: str) -> bool:
+    """Determine if a text span is bold based on PyMuPDF flags (bit 4 = 16) or font name."""
+    return bool(flags & 16) or ("bold" in font_name.lower())
+
+
 def extract_spans_from_pdf(
     file_or_bytes: Union[str, Path, bytes],
     filename: str = "document.pdf",
@@ -65,7 +70,8 @@ def extract_spans_from_pdf(
                     font_size = round(float(span.get("size", 0.0)), 2)
                     font_name = str(span.get("font", ""))
                     flags = int(span.get("flags", 0))
-                    is_bold = bool(flags & 2) or ("bold" in font_name.lower())
+                    is_bold = is_span_bold(flags, font_name)
+
 
                     page_spans.append(
                         {
