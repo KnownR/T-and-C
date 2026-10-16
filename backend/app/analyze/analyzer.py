@@ -41,9 +41,12 @@ from backend.app.db import (
 )
 from backend.app.verify import verify_findings
 
+# Single configuration location for default analysis model
+DEFAULT_ANALYSIS_MODEL = "gemini/gemini-2.5-flash"
 
 # Dry-run pattern definitions mapping category -> list of regex patterns and metadata
 DRY_RUN_CATEGORY_RULES = [
+
     {
         "category": "arbitration",
         "patterns": [
@@ -250,12 +253,7 @@ def analyze_document(
 
 
     # Non-dry-run mode: invoke LiteLLM
-    default_model = (
-        "gemini/gemini-1.5-flash"
-        if (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
-        else "gpt-4o-mini"
-    )
-    model_name = model or os.environ.get("ANALYSIS_MODEL", default_model)
+    model_name = model or os.environ.get("ANALYSIS_MODEL", DEFAULT_ANALYSIS_MODEL)
     system_prompt, user_prompt = build_analysis_prompt(lens_data, clauses)
 
     messages = [
