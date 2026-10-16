@@ -42,7 +42,7 @@ from backend.app.db import (
 from backend.app.verify import verify_findings
 
 # Single configuration location for default analysis model
-DEFAULT_ANALYSIS_MODEL = "gemini/gemini-2.5-flash"
+DEFAULT_ANALYSIS_MODEL = "gemini/gemini-3.8-flash"
 
 # Dry-run pattern definitions mapping category -> list of regex patterns and metadata
 DRY_RUN_CATEGORY_RULES = [

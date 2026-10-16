@@ -441,11 +441,11 @@ def test_app_starts_and_analyzes_without_any_api_keys_present(client, monkeypatc
     assert len(findings_resp.json()) == len(data["findings"])
 
 
-def test_default_model_is_gemini_2_5_flash_and_overridable(monkeypatch):
-    """Verify default model is gemini/gemini-2.5-flash with gemini/ prefix, and overridable via ANALYSIS_MODEL."""
+def test_default_model_is_gemini_3_8_flash_and_overridable(monkeypatch):
+    """Verify default model is gemini/gemini-3.8-flash with gemini/ prefix, and overridable via ANALYSIS_MODEL."""
     from backend.app.analyze import DEFAULT_ANALYSIS_MODEL
 
-    assert DEFAULT_ANALYSIS_MODEL == "gemini/gemini-2.5-flash"
+    assert DEFAULT_ANALYSIS_MODEL == "gemini/gemini-3.8-flash"
     assert DEFAULT_ANALYSIS_MODEL.startswith("gemini/")
 
     captured_model = None
@@ -461,19 +461,20 @@ def test_default_model_is_gemini_2_5_flash_and_overridable(monkeypatch):
 
     monkeypatch.setattr("litellm.completion", mock_completion)
 
-    # 1. Without env override, defaults to gemini/gemini-2.5-flash
+    # 1. Without env override, defaults to gemini/gemini-3.8-flash
     monkeypatch.delenv("ANALYSIS_MODEL", raising=False)
     doc = DocumentRecord(id="doc_m1", source_type="text", raw_text="Sample terms.")
     save_document(doc)
     clauses = [ClauseRecord(id="C-1", document_id="doc_m1", ordinal=1, text="Sample terms.", page=1)]
     save_clauses(clauses)
     analyze_document(doc, clauses, dry_run=False)
-    assert captured_model == "gemini/gemini-2.5-flash"
+    assert captured_model == "gemini/gemini-3.8-flash"
 
     # 2. With ANALYSIS_MODEL override
     monkeypatch.setenv("ANALYSIS_MODEL", "gemini/gemini-2.0-flash")
     analyze_document(doc, clauses, dry_run=False)
     assert captured_model == "gemini/gemini-2.0-flash"
+
 
 
 
