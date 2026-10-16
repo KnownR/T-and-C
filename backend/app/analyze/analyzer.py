@@ -16,10 +16,17 @@ import os
 import re
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Optional
+from dotenv import load_dotenv
+
+ROOT_DIR = Path(__file__).resolve().parents[3]
+load_dotenv(ROOT_DIR / ".env")
+load_dotenv()
 
 import litellm
 from pydantic import ValidationError
+
 
 from backend.app.analyze.lens import load_lens
 from backend.app.analyze.prompt import build_analysis_prompt
@@ -243,7 +250,12 @@ def analyze_document(
 
 
     # Non-dry-run mode: invoke LiteLLM
-    model_name = model or os.environ.get("ANALYSIS_MODEL", "gpt-4o-mini")
+    default_model = (
+        "gemini/gemini-1.5-flash"
+        if (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+        else "gpt-4o-mini"
+    )
+    model_name = model or os.environ.get("ANALYSIS_MODEL", default_model)
     system_prompt, user_prompt = build_analysis_prompt(lens_data, clauses)
 
     messages = [

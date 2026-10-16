@@ -396,3 +396,47 @@ def test_api_analyze_and_findings_endpoints(client):
     assert len(retrieved) == len(analysis_data["findings"])
     assert retrieved[0]["clause_id"].startswith("C-")
     assert retrieved[0]["quote"] != ""
+
+
+def test_app_starts_and_analyzes_without_any_api_keys_present(client, monkeypatch):
+    """Verify that the FastAPI app starts and performs complete analysis in dry-run mode
+
+    even when NO API keys (GEMINI_API_KEY, GOOGLE_API_KEY, OPENAI_API_KEY, etc.) exist in the environment,
+    ensuring missing keys never break the test suite or local analysis.
+    """
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    # 1. Health check works and reports key not configured
+    health_resp = client.get("/api/health")
+    assert health_resp.status_code == 200
+    health_data = health_resp.json()
+    assert health_data["status"] == "ok"
+    assert health_data["gemini_api_key_configured"] is False
+
+    # 2. Upload document
+    pdf_path = FIXTURES_DIR / "cloud_service_tos.pdf"
+    with open(pdf_path, "rb") as f:
+        upload_resp = client.post(
+            "/api/documents",
+            files={"file": ("cloud_service_tos.pdf", f, "application/pdf")},
+        )
+    assert upload_resp.status_code == 201
+    doc_id = upload_resp.json()["id"]
+
+    # 3. Dry-run analysis runs without API keys
+    analyze_resp = client.post(f"/api/documents/{doc_id}/analyze?dry_run=true")
+    assert analyze_resp.status_code == 200
+    data = analyze_resp.json()
+    assert data["run"]["model"] == "dry-run-stub"
+    assert data["run"]["proposed_count"] > 0
+    assert data["run"]["verified_count"] > 0
+    assert len(data["findings"]) > 0
+
+    # 4. Retrieve findings
+    findings_resp = client.get(f"/api/documents/{doc_id}/findings")
+    assert findings_resp.status_code == 200
+    assert len(findings_resp.json()) == len(data["findings"])
+

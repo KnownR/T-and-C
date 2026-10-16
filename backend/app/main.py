@@ -1,7 +1,16 @@
 """FastAPI application for What Did I Agree To."""
 
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Optional
+from dotenv import load_dotenv
+
+# Load .env file at startup before reading environment variables
+ROOT_DIR = Path(__file__).resolve().parents[2]
+load_dotenv(ROOT_DIR / ".env")
+load_dotenv()
+
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -18,6 +27,7 @@ from backend.app.db import (
 from backend.app.ingest.pdf import extract_spans_from_pdf
 from backend.app.ingest.text import extract_spans_from_text
 from backend.app.segment.splitter import split_document_into_clauses
+
 
 
 @asynccontextmanager
@@ -81,11 +91,16 @@ class DocumentResponse(BaseModel):
 
 @app.get("/api/health")
 def health_check() -> dict[str, Any]:
+    gemini_configured = bool(
+        os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    )
     return {
         "status": "ok",
         "app": "what-did-i-agree-to",
-        "phase": 2,
+        "phase": 4,
+        "gemini_api_key_configured": gemini_configured,
     }
+
 
 
 @app.post(

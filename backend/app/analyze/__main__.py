@@ -2,11 +2,19 @@
 
 import argparse
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env file at startup before reading environment variables
+ROOT_DIR = Path(__file__).resolve().parents[3]
+load_dotenv(ROOT_DIR / ".env")
+load_dotenv()
+
 from backend.app.analyze.analyzer import analyze_document
 from backend.app.db import DocumentRecord, init_db, save_clauses, save_document
 from backend.app.ingest.pdf import extract_spans_from_pdf
 from backend.app.ingest.text import extract_spans_from_text
 from backend.app.segment.splitter import split_document_into_clauses
+
 
 
 def main() -> None:
