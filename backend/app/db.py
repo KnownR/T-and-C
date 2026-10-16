@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS analysis_runs (
     model TEXT,
     lens TEXT NOT NULL DEFAULT 'tos',
     total_clauses INTEGER NOT NULL DEFAULT 0,
+    tokens_in INTEGER NOT NULL DEFAULT 0,
+    tokens_out INTEGER NOT NULL DEFAULT 0,
     proposed_count INTEGER NOT NULL DEFAULT 0,
     verified_count INTEGER NOT NULL DEFAULT 0,
     rejected_count INTEGER NOT NULL DEFAULT 0,
@@ -87,11 +89,22 @@ CREATE TABLE IF NOT EXISTS findings (
 
 
 def init_db(db_path: Optional[str] = None) -> None:
-    """Initialize database tables according to schema."""
+    """Initialize database tables according to schema and migrate columns if needed."""
     conn = get_db_connection(db_path)
     try:
         with conn:
             conn.executescript(SCHEMA_SQL)
+            # Lightweight schema migration for existing SQLite databases
+            cur = conn.execute("PRAGMA table_info(analysis_runs);")
+            columns = {row["name"] for row in cur.fetchall()}
+            if columns and "tokens_in" not in columns:
+                conn.execute(
+                    "ALTER TABLE analysis_runs ADD COLUMN tokens_in INTEGER NOT NULL DEFAULT 0;"
+                )
+            if columns and "tokens_out" not in columns:
+                conn.execute(
+                    "ALTER TABLE analysis_runs ADD COLUMN tokens_out INTEGER NOT NULL DEFAULT 0;"
+                )
     finally:
         conn.close()
 
@@ -245,4 +258,202 @@ def get_clauses(
         ]
     finally:
         conn.close()
+
+
+class AnalysisRunRecord(BaseModel):
+    id: str
+    document_id: str
+    model: Optional[str] = None
+    lens: str = "tos"
+    total_clauses: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    proposed_count: int = 0
+    verified_count: int = 0
+    rejected_count: int = 0
+    grounding_rate: float = 0.0
+    latency_ms: float = 0.0
+    cost_usd: float = 0.0
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+def save_analysis_run(
+    run: AnalysisRunRecord, db_path: Optional[str] = None
+) -> AnalysisRunRecord:
+    """Save an analysis run record to SQLite."""
+    conn = get_db_connection(db_path)
+    try:
+        with conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO analysis_runs (
+                    id, document_id, model, lens, total_clauses,
+                    tokens_in, tokens_out, proposed_count, verified_count,
+                    rejected_count, grounding_rate, latency_ms, cost_usd, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run.id,
+                    run.document_id,
+                    run.model,
+                    run.lens,
+                    run.total_clauses,
+                    run.tokens_in,
+                    run.tokens_out,
+                    run.proposed_count,
+                    run.verified_count,
+                    run.rejected_count,
+                    run.grounding_rate,
+                    run.latency_ms,
+                    run.cost_usd,
+                    run.created_at,
+                ),
+            )
+        return run
+    finally:
+        conn.close()
+
+
+def get_analysis_run(
+    run_id: str, db_path: Optional[str] = None
+) -> Optional[AnalysisRunRecord]:
+    """Retrieve an analysis run record by ID."""
+    conn = get_db_connection(db_path)
+    try:
+        cur = conn.execute(
+            """
+            SELECT id, document_id, model, lens, total_clauses,
+                   tokens_in, tokens_out, proposed_count, verified_count,
+                   rejected_count, grounding_rate, latency_ms, cost_usd, created_at
+            FROM analysis_runs WHERE id = ?
+            """,
+            (run_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return AnalysisRunRecord(
+            id=row["id"],
+            document_id=row["document_id"],
+            model=row["model"],
+            lens=row["lens"],
+            total_clauses=row["total_clauses"],
+            tokens_in=row["tokens_in"],
+            tokens_out=row["tokens_out"],
+            proposed_count=row["proposed_count"],
+            verified_count=row["verified_count"],
+            rejected_count=row["rejected_count"],
+            grounding_rate=row["grounding_rate"],
+            latency_ms=row["latency_ms"],
+            cost_usd=row["cost_usd"],
+            created_at=row["created_at"],
+        )
+    finally:
+        conn.close()
+
+
+class FindingRecord(BaseModel):
+    id: str
+    document_id: str
+    analysis_run_id: Optional[str] = None
+    category: str
+    severity: str
+    title: str
+    explanation: str
+    clause_id: str
+    quote: str
+    verification_status: str = "proposed"
+    verification_details: Optional[str] = None
+    match_score: Optional[float] = None
+
+
+def save_findings(
+    findings: list[FindingRecord], db_path: Optional[str] = None
+) -> list[FindingRecord]:
+    """Save a list of findings to SQLite."""
+    conn = get_db_connection(db_path)
+    try:
+        with conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO findings (
+                    id, document_id, analysis_run_id, category, severity,
+                    title, explanation, clause_id, quote,
+                    verification_status, verification_details, match_score
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        f.id,
+                        f.document_id,
+                        f.analysis_run_id,
+                        f.category,
+                        f.severity,
+                        f.title,
+                        f.explanation,
+                        f.clause_id,
+                        f.quote,
+                        f.verification_status,
+                        f.verification_details,
+                        f.match_score,
+                    )
+                    for f in findings
+                ],
+            )
+        return findings
+    finally:
+        conn.close()
+
+
+def get_findings(
+    document_id: str,
+    analysis_run_id: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> list[FindingRecord]:
+    """Retrieve findings for a document, optionally filtered by analysis_run_id."""
+    conn = get_db_connection(db_path)
+    try:
+        if analysis_run_id:
+            cur = conn.execute(
+                """
+                SELECT id, document_id, analysis_run_id, category, severity,
+                       title, explanation, clause_id, quote,
+                       verification_status, verification_details, match_score
+                FROM findings WHERE document_id = ? AND analysis_run_id = ?
+                """,
+                (document_id, analysis_run_id),
+            )
+        else:
+            cur = conn.execute(
+                """
+                SELECT id, document_id, analysis_run_id, category, severity,
+                       title, explanation, clause_id, quote,
+                       verification_status, verification_details, match_score
+                FROM findings WHERE document_id = ?
+                """,
+                (document_id,),
+            )
+        rows = cur.fetchall()
+        return [
+            FindingRecord(
+                id=row["id"],
+                document_id=row["document_id"],
+                analysis_run_id=row["analysis_run_id"],
+                category=row["category"],
+                severity=row["severity"],
+                title=row["title"],
+                explanation=row["explanation"],
+                clause_id=row["clause_id"],
+                quote=row["quote"],
+                verification_status=row["verification_status"],
+                verification_details=row["verification_details"],
+                match_score=row["match_score"],
+            )
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
 

@@ -176,3 +176,109 @@ def get_document_clauses_endpoint(doc_id: str) -> list[ClauseModel]:
         )
     clauses = get_clauses(doc_id)
     return [ClauseModel(**c.model_dump()) for c in clauses]
+
+
+class FindingModel(BaseModel):
+    id: str
+    document_id: str
+    analysis_run_id: Optional[str] = None
+    category: str
+    severity: str
+    title: str
+    explanation: str
+    clause_id: str
+    quote: str
+    verification_status: str
+    verification_details: Optional[str] = None
+    match_score: Optional[float] = None
+
+
+class AnalysisRunModel(BaseModel):
+    id: str
+    document_id: str
+    model: Optional[str] = None
+    lens: str
+    total_clauses: int
+    tokens_in: int
+    tokens_out: int
+    proposed_count: int
+    verified_count: int
+    rejected_count: int
+    grounding_rate: float
+    latency_ms: float
+    cost_usd: float
+    created_at: str
+
+
+class AnalysisResponse(BaseModel):
+    run: AnalysisRunModel
+    findings: list[FindingModel]
+
+
+@app.post("/api/documents/{doc_id}/analyze", response_model=AnalysisResponse)
+def analyze_document_endpoint(
+    doc_id: str,
+    lens: str = "tos",
+    dry_run: bool = False,
+    model: Optional[str] = None,
+) -> AnalysisResponse:
+    """Analyze a document using the specified lens (default 'tos').
+
+    Supports dry_run=True for fast offline zero-cost analysis.
+    """
+    doc = get_document(doc_id)
+    if not doc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document with ID '{doc_id}' not found.",
+        )
+
+    clauses = get_clauses(doc_id)
+    if not clauses:
+        clauses = split_document_into_clauses(
+            spans=doc.spans,
+            raw_text=doc.raw_text,
+            document_id=doc.id,
+        )
+        save_clauses(clauses)
+
+    from backend.app.analyze.analyzer import analyze_document
+
+    try:
+        run, findings = analyze_document(
+            document=doc,
+            clauses=clauses,
+            lens_id=lens,
+            dry_run=dry_run,
+            model=model,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Analysis failed: {str(e)}",
+        )
+
+    return AnalysisResponse(
+        run=AnalysisRunModel(**run.model_dump()),
+        findings=[FindingModel(**f.model_dump()) for f in findings],
+    )
+
+
+@app.get("/api/documents/{doc_id}/findings", response_model=list[FindingModel])
+def get_document_findings_endpoint(
+    doc_id: str,
+    analysis_run_id: Optional[str] = None,
+) -> list[FindingModel]:
+    """Retrieve findings for a document, optionally filtered by analysis_run_id."""
+    from backend.app.db import get_findings
+
+    doc = get_document(doc_id)
+    if not doc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document with ID '{doc_id}' not found.",
+        )
+
+    findings = get_findings(document_id=doc_id, analysis_run_id=analysis_run_id)
+    return [FindingModel(**f.model_dump()) for f in findings]
+

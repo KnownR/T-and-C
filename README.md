@@ -17,8 +17,8 @@ No finding is ever displayed in the UI without a verified quote matching the ori
 |---|---|---|
 | **Phase 1** | Foundation & Ingestion (FastAPI, SQLite schema, PyMuPDF spans & bboxes, Pasted text) | ✅ Complete |
 | **Phase 2** | Segmentation (Rule-based clause splitter with stable IDs & bounding boxes) | ✅ Complete |
-| **Phase 3** | Analysis with structured output (8 UNFAIR-ToS categories) | ⏳ Next |
-| **Phase 4** | Citation verifier (Exact $\rightarrow$ fuzzy $\rightarrow$ re-anchor $\rightarrow$ reject) | ⏳ Pending |
+| **Phase 3** | Analysis with structured output (8 UNFAIR-ToS categories, prompt from YAML, LiteLLM + dry-run) | ✅ Complete |
+| **Phase 4** | Citation verifier (Exact $\rightarrow$ fuzzy $\rightarrow$ re-anchor $\rightarrow$ reject) | ⏳ Next |
 | **Phase 5** | Minimal polished UI (Findings list + PDF viewer with highlight) | ⏳ Pending |
 | **Phase 6** | Evals & Benchmarks (UNFAIR-ToS eval runner & golden set) | ⏳ Pending |
 
@@ -79,11 +79,28 @@ curl -X POST -H "Content-Type: application/json" \
   http://localhost:8000/api/documents
 ```
 
+### Analysis CLI (Dry-Run Mode)
+Analyze any Terms of Service document offline at zero cost using deterministic rubric pattern matching:
+```bash
+python -m backend.app.analyze --file backend/tests/fixtures/cloud_service_tos.pdf --dry-run
+```
+
+Or trigger analysis via the FastAPI endpoint:
+```bash
+curl -X POST "http://localhost:8000/api/documents/{doc_id}/analyze?dry_run=true"
+curl -X GET "http://localhost:8000/api/documents/{doc_id}/findings"
+```
+
 ## Decisions & Architecture
 1. **Span Bounding Boxes:** PyMuPDF extracts character and word spans directly with `bbox: [x0, y0, x1, y1]`, font size, and font weight/bold flags (checked via bit 16 and font name). Spans are ordered in deterministic reading order ($page \rightarrow y_0 \rightarrow x_0$).
 2. **Deterministic Clause Segmentation:** Regex rules detect `1.`, `1.1`, `(a)`, `Section 4.2`, `Clause 7`, and `Article I`, alongside font size/boldness styling. Stable IDs (`C-1`...`C-n`) and bounding box regions are attached to each clause.
 3. **Zero-LLM Fallback:** If a document lacks numbering or headings, segmentation deterministically falls back to heading-less paragraphs as clauses.
-4. **Known Layout Limitations:**
+4. **Structured Output & Dynamic Rubric:** Findings schema enforces `{category, severity, title, explanation, clause_id, quote}`. The rubric is built entirely from `lenses/tos.yaml` (8 UNFAIR-ToS categories: arbitration, unilateral change, content removal, jurisdiction, choice of law, limitation of liability, unilateral termination, contract by using); no categories are hardcoded in Python.
+5. **Prompt Grounding & Untrusted Input:** The document clauses are wrapped in `<document>` tags explicitly flagged as untrusted user data. Prompts strictly instruct the model that every quote must be an exact verbatim substring of its cited clause.
+6. **Robust Validation Recovery:** On schema validation failure, the system retries exactly ONCE with the error message fed back. On repeated failure, it logs the failure in `analysis_runs` with `proposed_count=0` and moves on without infinite loops.
+7. **Per-Run Telemetry & Dry-Run Mode:** Every run records model, tokens in/out, cost USD, latency ms, and proposed/rejected counts. The `--dry-run` stubbed mode enables full end-to-end testing without cloud API keys or costs.
+8. **Known Layout Limitations:**
    - **Multi-column layouts & tables:** Multi-column text flow is currently ingested sequentially in top-to-bottom reading order. Complex magazine-style multi-column text flows and nested HTML/PDF tables are treated as sequential paragraphs rather than performing full geometric 2D column de-warping.
-5. **Database Schema:** SQLite stores `documents`, `clauses`, `findings`, and `analysis_runs` with foreign key enforcement enabled (`PRAGMA foreign_keys = ON`).
+9. **Database Schema:** SQLite stores `documents`, `clauses`, `findings`, and `analysis_runs` with foreign key enforcement enabled (`PRAGMA foreign_keys = ON`).
+
 
