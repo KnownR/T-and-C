@@ -41,13 +41,17 @@ def main() -> None:
     clauses = split_document_into_clauses(doc_data["spans"], doc_data["raw_text"], doc_record.id)
     save_clauses(clauses)
 
-    run, findings = analyze_document(
-        document=doc_record,
-        clauses=clauses,
-        lens_id=args.lens,
-        dry_run=args.dry_run,
-        model=args.model,
-    )
+    try:
+        run, findings = analyze_document(
+            document=doc_record,
+            clauses=clauses,
+            lens_id=args.lens,
+            dry_run=args.dry_run,
+            model=args.model,
+        )
+    except Exception as exc:
+        print(f"\n[Error] Analysis failed: {exc}")
+        raise SystemExit(1)
 
     print(f"\n--- Analysis & Verification Summary ---")
     print(f"Run ID:          {run.id}")

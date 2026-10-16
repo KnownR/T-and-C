@@ -17,14 +17,16 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 load_dotenv(ROOT_DIR / ".env")
 load_dotenv()
 
+import random
 import litellm
+import litellm.exceptions
 from pydantic import ValidationError
 
 
@@ -43,6 +45,130 @@ from backend.app.verify import verify_findings
 
 # Single configuration location for default analysis model
 DEFAULT_ANALYSIS_MODEL = "gemini/gemini-3.8-flash"
+
+
+def is_transient_error(exc: Exception) -> bool:
+    """Classify whether an exception is transient (e.g. 503, 429, 408, network timeouts) vs permanent."""
+    # Definite permanent LiteLLM exceptions: never retry
+    permanent_types = (
+        litellm.exceptions.AuthenticationError,
+        litellm.exceptions.PermissionDeniedError,
+        litellm.exceptions.NotFoundError,
+        litellm.exceptions.BadRequestError,
+        litellm.exceptions.InvalidRequestError,
+        litellm.exceptions.UnprocessableEntityError,
+        litellm.exceptions.ContextWindowExceededError,
+    )
+    if isinstance(exc, permanent_types):
+        return False
+
+    status_code = (
+        getattr(exc, "status_code", None)
+        or getattr(exc, "http_status", None)
+        or getattr(exc, "code", None)
+    )
+    if status_code in (400, 401, 403, 404, 422):
+        return False
+
+    # Definite transient LiteLLM exceptions
+    transient_types = (
+        litellm.exceptions.ServiceUnavailableError,
+        litellm.exceptions.RateLimitError,
+        litellm.exceptions.Timeout,
+        litellm.exceptions.APIConnectionError,
+        litellm.exceptions.InternalServerError,
+        litellm.exceptions.BadGatewayError,
+    )
+    if isinstance(exc, transient_types):
+        return True
+
+    if status_code in (408, 429, 500, 502, 503, 504):
+        return True
+
+    # Check error message strings for known transient indicators
+    err_str = str(exc).lower()
+    transient_keywords = [
+        "503",
+        "429",
+        "408",
+        "high demand",
+        "spikes in demand",
+        "temporarily unavailable",
+        "rate limit",
+        "resource exhausted",
+        "resource_exhausted",
+        "connection error",
+        "timeout",
+        "timed out",
+        "try again later",
+    ]
+    return any(kw in err_str for kw in transient_keywords)
+
+
+def completion_with_backoff(
+    *,
+    model: str,
+    messages: list[dict[str, str]],
+    response_format: Optional[dict[str, Any]] = None,
+    max_transient_retries: Optional[int] = None,
+    base_delay: Optional[float] = None,
+    max_delay: Optional[float] = None,
+    sleep_fn: Optional[Callable[[float], None]] = None,
+) -> Any:
+    """Execute litellm.completion with bounded exponential backoff and jitter for transient errors.
+
+    Prevents nested retries by disabling internal LiteLLM retries (num_retries=0).
+    Fails immediately without retries for permanent errors (401, 403, 404, 400).
+    """
+    if max_transient_retries is None:
+        max_transient_retries = int(os.environ.get("ANALYSIS_MAX_TRANSIENT_RETRIES", "4"))
+    if base_delay is None:
+        base_delay = float(os.environ.get("ANALYSIS_BASE_BACKOFF", "1.5"))
+    if max_delay is None:
+        max_delay = float(os.environ.get("ANALYSIS_MAX_BACKOFF", "12.0"))
+    if sleep_fn is None:
+        sleep_fn = time.sleep
+
+    total_attempts = 1 + max(0, max_transient_retries)
+
+    for attempt in range(1, total_attempts + 1):
+        try:
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "num_retries": 0,  # Ensure no hidden nested LiteLLM retries
+            }
+            if response_format is not None:
+                kwargs["response_format"] = response_format
+
+            return litellm.completion(**kwargs)
+
+        except Exception as exc:
+            if not is_transient_error(exc):
+                status_val = getattr(exc, "status_code", "permanent")
+                print(
+                    f"\n[Model API] Error: Non-retryable error ({status_val}) from model '{model}': {exc}"
+                )
+                raise
+
+            if attempt < total_attempts:
+                # Exponential backoff with jitter
+                delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
+                jitter = random.uniform(0.1, max(0.2, 0.4 * delay))
+                sleep_time = min(max_delay, delay + jitter)
+                status_val = getattr(exc, "status_code", "503")
+                print(
+                    f"[Model API] Warning: Upstream transient error ({status_val}) from {model}. "
+                    f"Retrying in {sleep_time:.2f}s (retry {attempt}/{max_transient_retries})..."
+                )
+                sleep_fn(sleep_time)
+            else:
+                status_val = getattr(exc, "status_code", "503")
+                print(
+                    f"\n[Model API] Error: Bounded transient retries exhausted ({total_attempts} attempts) "
+                    f"for model '{model}' (HTTP {status_val})."
+                )
+                raise
 
 # Dry-run pattern definitions mapping category -> list of regex patterns and metadata
 DRY_RUN_CATEGORY_RULES = [
@@ -187,6 +313,8 @@ def analyze_document(
     max_retries: int = 1,
     model: Optional[str] = None,
     db_path: Optional[str] = None,
+    max_transient_retries: Optional[int] = None,
+    sleep_fn: Optional[Callable[[float], None]] = None,
 ) -> tuple[AnalysisRunRecord, list[FindingRecord]]:
     """Perform structured legal analysis on a document's clauses.
 
@@ -198,6 +326,8 @@ def analyze_document(
         max_retries: Number of retries on schema validation failure (default 1).
         model: Model name for LiteLLM completion (env ANALYSIS_MODEL if None).
         db_path: Optional SQLite DB path.
+        max_transient_retries: Number of retries on transient errors (HTTP 503, 429, etc.).
+        sleep_fn: Optional sleep function for backoff delays (default time.sleep).
 
     Returns:
         tuple[AnalysisRunRecord, list[FindingRecord]]
@@ -252,7 +382,7 @@ def analyze_document(
         return run, verified_records
 
 
-    # Non-dry-run mode: invoke LiteLLM
+    # Non-dry-run mode: invoke LiteLLM with transient retry wrapper
     model_name = model or os.environ.get("ANALYSIS_MODEL", DEFAULT_ANALYSIS_MODEL)
     system_prompt, user_prompt = build_analysis_prompt(lens_data, clauses)
 
@@ -270,10 +400,12 @@ def analyze_document(
 
     while attempts < max_attempts:
         attempts += 1
-        resp = litellm.completion(
+        resp = completion_with_backoff(
             model=model_name,
             messages=messages,
             response_format={"type": "json_object"},
+            max_transient_retries=max_transient_retries,
+            sleep_fn=sleep_fn,
         )
 
         if hasattr(resp, "usage") and resp.usage:

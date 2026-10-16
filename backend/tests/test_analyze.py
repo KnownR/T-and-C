@@ -476,5 +476,167 @@ def test_default_model_is_gemini_3_8_flash_and_overridable(monkeypatch):
     assert captured_model == "gemini/gemini-2.0-flash"
 
 
+def test_is_transient_error_classification():
+    """Verify that transient vs permanent errors are correctly categorized."""
+    import litellm.exceptions as ex
+    from backend.app.analyze import is_transient_error
+
+    # Transient errors
+    assert is_transient_error(ex.ServiceUnavailableError("High demand 503", "gemini/gemini-3.8-flash", "gemini"))
+    assert is_transient_error(ex.RateLimitError("Rate limit 429", "gemini/gemini-3.8-flash", "gemini"))
+    assert is_transient_error(ex.Timeout("Timed out", "gemini/gemini-3.8-flash", "gemini"))
+    assert is_transient_error(ex.APIConnectionError("Connection lost", "gemini/gemini-3.8-flash", "gemini"))
+    assert is_transient_error(ex.InternalServerError("Server error 500", "gemini/gemini-3.8-flash", "gemini"))
+    assert is_transient_error(ex.BadGatewayError("Bad gateway 502", "gemini/gemini-3.8-flash", "gemini"))
+    assert is_transient_error(RuntimeError("This model is currently experiencing high demand. Spikes in demand are usually temporary."))
+
+    # Permanent non-retryable errors
+    assert not is_transient_error(ex.AuthenticationError("Invalid API key", "gemini/gemini-3.8-flash", "gemini"))
+    assert not is_transient_error(ex.NotFoundError("Model not found", "gemini/gemini-3.8-flash", "gemini"))
+    assert not is_transient_error(ex.BadRequestError("Malformed query", "gemini/gemini-3.8-flash", "gemini"))
+    assert not is_transient_error(ex.ContextWindowExceededError("Too long", "gemini/gemini-3.8-flash", "gemini"))
+
+    # Status code attribute checks
+    class Custom403(Exception):
+        status_code = 403
+    assert not is_transient_error(Custom403("Forbidden"))
+
+    class Custom400(Exception):
+        status_code = 400
+    assert not is_transient_error(Custom400("Bad Request"))
+
+
+def test_successful_retry_after_503(monkeypatch):
+    """Verify that an initial HTTP 503 transient error retries with backoff and succeeds on the next attempt."""
+    import litellm.exceptions as ex
+    from backend.app.analyze import analyze_document
+
+    call_count = 0
+    sleep_delays: list[float] = []
+
+    def mock_completion(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        assert kwargs.get("num_retries") == 0, "Must pass num_retries=0 to prevent nested retries"
+        if call_count == 1:
+            raise ex.ServiceUnavailableError(
+                message="This model is currently experiencing high demand. Spikes in demand are usually temporary.",
+                model="gemini/gemini-3.8-flash",
+                llm_provider="gemini",
+            )
+        # 2nd attempt succeeds
+        mock_resp = MagicMock()
+        mock_resp.usage.prompt_tokens = 60
+        mock_resp.usage.completion_tokens = 25
+        mock_resp.choices = [
+            MagicMock(
+                message=MagicMock(
+                    content='{"findings": [{"category": "unilateral_change", "severity": "red", "title": "Change", "explanation": "unilateral", "clause_id": "C-1", "quote": "We may update terms."}]}'
+                )
+            )
+        ]
+        return mock_resp
+
+    monkeypatch.setattr("litellm.completion", mock_completion)
+
+    doc = DocumentRecord(id="doc_retry_503", source_type="text", raw_text="We may update terms.")
+    save_document(doc)
+    clauses = [ClauseRecord(id="C-1", document_id="doc_retry_503", ordinal=1, text="We may update terms.", page=1)]
+    save_clauses(clauses)
+
+    run, findings = analyze_document(
+        document=doc,
+        clauses=clauses,
+        dry_run=False,
+        max_transient_retries=3,
+        sleep_fn=sleep_delays.append,
+    )
+
+    assert call_count == 2, "Must retry exactly once after initial 503 and succeed"
+    assert len(sleep_delays) == 1, "Must have recorded exactly one sleep before the successful retry"
+    assert sleep_delays[0] > 0, "Backoff sleep delay must be positive"
+    assert len(findings) == 1
+    assert findings[0].category == "unilateral_change"
+    assert run.verified_count == 1
+
+
+def test_retry_exhaustion_on_503(monkeypatch):
+    """Verify that when 503 persists beyond max_transient_retries, it raises and does not loop infinitely."""
+    import litellm.exceptions as ex
+    import pytest
+    from backend.app.analyze import analyze_document
+
+    call_count = 0
+    sleep_delays: list[float] = []
+
+    def mock_failing_completion(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        raise ex.ServiceUnavailableError(
+            message="This model is currently experiencing high demand. Spikes in demand are usually temporary.",
+            model="gemini/gemini-3.8-flash",
+            llm_provider="gemini",
+        )
+
+    monkeypatch.setattr("litellm.completion", mock_failing_completion)
+
+    doc = DocumentRecord(id="doc_exhaust", source_type="text", raw_text="Some text.")
+    save_document(doc)
+    clauses = [ClauseRecord(id="C-1", document_id="doc_exhaust", ordinal=1, text="Some text.", page=1)]
+    save_clauses(clauses)
+
+    with pytest.raises(ex.ServiceUnavailableError):
+        analyze_document(
+            document=doc,
+            clauses=clauses,
+            dry_run=False,
+            max_transient_retries=2,  # 1 initial + 2 retries = 3 total attempts
+            sleep_fn=sleep_delays.append,
+        )
+
+    assert call_count == 3, "Must attempt initial call + 2 retries, then terminate"
+    assert len(sleep_delays) == 2, "Must sleep between attempts"
+    # Verify exponential backoff: second delay should be larger than first
+    assert sleep_delays[1] > sleep_delays[0]
+
+
+def test_non_retryable_error_fails_immediately(monkeypatch):
+    """Verify that non-retryable errors (e.g. 401 AuthenticationError) fail immediately without retrying."""
+    import litellm.exceptions as ex
+    import pytest
+    from backend.app.analyze import analyze_document
+
+    call_count = 0
+    sleep_delays: list[float] = []
+
+    def mock_auth_failure(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        raise ex.AuthenticationError(
+            message="API key not valid. Please pass a valid API key.",
+            model="gemini/gemini-3.8-flash",
+            llm_provider="gemini",
+        )
+
+    monkeypatch.setattr("litellm.completion", mock_auth_failure)
+
+    doc = DocumentRecord(id="doc_auth_err", source_type="text", raw_text="Some text.")
+    save_document(doc)
+    clauses = [ClauseRecord(id="C-1", document_id="doc_auth_err", ordinal=1, text="Some text.", page=1)]
+    save_clauses(clauses)
+
+    with pytest.raises(ex.AuthenticationError):
+        analyze_document(
+            document=doc,
+            clauses=clauses,
+            dry_run=False,
+            max_transient_retries=3,
+            sleep_fn=sleep_delays.append,
+        )
+
+    assert call_count == 1, "Must NOT retry on permanent authentication error"
+    assert len(sleep_delays) == 0, "Must never sleep on non-retryable errors"
+
+
 
 
