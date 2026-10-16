@@ -32,6 +32,7 @@ from backend.app.db import (
     save_analysis_run,
     save_findings,
 )
+from backend.app.verify import verify_findings
 
 
 # Dry-run pattern definitions mapping category -> list of regex patterns and metadata
@@ -213,6 +214,14 @@ def analyze_document(
                 seen.add(key)
                 deduped.append(f)
 
+        # Verify findings deterministically
+        verified_records, verified_count, rejected_count, grounding_rate = verify_findings(
+            findings=deduped,
+            clauses=clauses,
+            document_id=document.id,
+            analysis_run_id=run_id,
+        )
+
         run = AnalysisRunRecord(
             id=run_id,
             document_id=document.id,
@@ -224,28 +233,14 @@ def analyze_document(
             cost_usd=cost_usd,
             latency_ms=latency_ms,
             proposed_count=len(deduped),
-            verified_count=0,
-            rejected_count=0,
+            verified_count=verified_count,
+            rejected_count=rejected_count,
+            grounding_rate=grounding_rate,
         )
         save_analysis_run(run, db_path=db_path)
+        save_findings(verified_records, db_path=db_path)
+        return run, verified_records
 
-        finding_records = [
-            FindingRecord(
-                id=f"f_{uuid.uuid4().hex[:12]}",
-                document_id=document.id,
-                analysis_run_id=run.id,
-                category=f.category,
-                severity=f.severity,
-                title=f.title,
-                explanation=f.explanation,
-                clause_id=f.clause_id,
-                quote=f.quote,
-                verification_status="proposed",
-            )
-            for f in deduped
-        ]
-        save_findings(finding_records, db_path=db_path)
-        return run, finding_records
 
     # Non-dry-run mode: invoke LiteLLM
     model_name = model or os.environ.get("ANALYSIS_MODEL", "gpt-4o-mini")
@@ -339,6 +334,14 @@ def analyze_document(
             seen.add(key)
             deduped.append(f)
 
+    # Verify findings deterministically
+    verified_records, verified_count, rejected_count, grounding_rate = verify_findings(
+        findings=deduped,
+        clauses=clauses,
+        document_id=document.id,
+        analysis_run_id=run_id,
+    )
+
     run = AnalysisRunRecord(
         id=run_id,
         document_id=document.id,
@@ -350,28 +353,14 @@ def analyze_document(
         cost_usd=total_cost,
         latency_ms=latency_ms,
         proposed_count=len(deduped),
-        verified_count=0,
-        rejected_count=0,
+        verified_count=verified_count,
+        rejected_count=rejected_count,
+        grounding_rate=grounding_rate,
     )
     save_analysis_run(run, db_path=db_path)
+    save_findings(verified_records, db_path=db_path)
+    return run, verified_records
 
-    finding_records = [
-        FindingRecord(
-            id=f"f_{uuid.uuid4().hex[:12]}",
-            document_id=document.id,
-            analysis_run_id=run.id,
-            category=f.category,
-            severity=f.severity,
-            title=f.title,
-            explanation=f.explanation,
-            clause_id=f.clause_id,
-            quote=f.quote,
-            verification_status="proposed",
-        )
-        for f in deduped
-    ]
-    save_findings(finding_records, db_path=db_path)
-    return run, finding_records
 
 
 if __name__ == "__main__":

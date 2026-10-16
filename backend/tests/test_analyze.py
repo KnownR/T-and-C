@@ -296,9 +296,13 @@ def test_findings_deduplicated_by_category_and_clause_id(monkeypatch):
     ]
     monkeypatch.setattr("litellm.completion", lambda *args, **kwargs: mock_resp)
 
-    doc = DocumentRecord(id="doc_dedupe", source_type="text", raw_text="Arbitration text.")
+    raw_text = (
+        "Any dispute, claim or controversy shall be settled exclusively by "
+        "confidential binding arbitration in Wilmington, Delaware."
+    )
+    doc = DocumentRecord(id="doc_dedupe", source_type="text", raw_text=raw_text)
     save_document(doc)
-    clauses = [ClauseRecord(id="C-5", document_id="doc_dedupe", ordinal=5, text="Arbitration text.", page=1)]
+    clauses = [ClauseRecord(id="C-5", document_id="doc_dedupe", ordinal=5, text=raw_text, page=1)]
     save_clauses(clauses)
 
     run, findings = analyze_document(doc, clauses, dry_run=False)

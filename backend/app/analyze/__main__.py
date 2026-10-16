@@ -41,20 +41,26 @@ def main() -> None:
         model=args.model,
     )
 
-    print(f"\n--- Analysis Run Summary ---")
-    print(f"Run ID:         {run.id}")
-    print(f"Model:          {run.model}")
-    print(f"Lens:           {run.lens}")
-    print(f"Total Clauses:  {run.total_clauses}")
-    print(f"Proposed:       {run.proposed_count}")
-    print(f"Tokens In/Out:  {run.tokens_in} / {run.tokens_out}")
-    print(f"Cost (USD):     ${run.cost_usd:.4f}")
-    print(f"Latency:        {run.latency_ms:.1f} ms")
-    print(f"\n--- Proposed Findings ({len(findings)}) ---")
+    print(f"\n--- Analysis & Verification Summary ---")
+    print(f"Run ID:          {run.id}")
+    print(f"Model:           {run.model}")
+    print(f"Lens:            {run.lens}")
+    print(f"Total Clauses:   {run.total_clauses}")
+    print(f"Proposed:        {run.proposed_count}")
+    print(f"Verified:        {run.verified_count}")
+    print(f"Rejected:        {run.rejected_count}")
+    print(f"Grounding Rate:  {run.grounding_rate * 100:.1f}%")
+    print(f"Tokens In/Out:   {run.tokens_in} / {run.tokens_out}")
+    print(f"Cost (USD):      ${run.cost_usd:.4f}")
+    print(f"Latency:         {run.latency_ms:.1f} ms")
+    print(f"\n--- Verified Findings ({len(findings)}) ---")
     for idx, f in enumerate(findings, 1):
-        print(f"\n[{idx}] [{f.severity.upper()}] {f.title} ({f.category}) - Clause {f.clause_id}")
+        print(f"\n[{idx}] [{f.severity.upper()}] [{f.verification_status.upper()}] {f.title} ({f.category}) - Clause {f.clause_id}")
+        if f.match_score is not None:
+            print(f"    Match Score: {f.match_score:.1f}%")
         print(f"    Quote:       \"{f.quote}\"")
         print(f"    Explanation: {f.explanation}")
+
 
 
 if __name__ == "__main__":

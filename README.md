@@ -18,8 +18,8 @@ No finding is ever displayed in the UI without a verified quote matching the ori
 | **Phase 1** | Foundation & Ingestion (FastAPI, SQLite schema, PyMuPDF spans & bboxes, Pasted text) | ✅ Complete |
 | **Phase 2** | Segmentation (Rule-based clause splitter with stable IDs & bounding boxes) | ✅ Complete |
 | **Phase 3** | Analysis with structured output (8 UNFAIR-ToS categories, prompt from YAML, LiteLLM + dry-run) | ✅ Complete |
-| **Phase 4** | Citation verifier (Exact $\rightarrow$ fuzzy $\rightarrow$ re-anchor $\rightarrow$ reject) | ⏳ Next |
-| **Phase 5** | Minimal polished UI (Findings list + PDF viewer with highlight) | ⏳ Pending |
+| **Phase 4** | Citation verifier (Exact $\rightarrow$ fuzzy $\rightarrow$ re-anchor $\rightarrow$ reject, grounding rate metrics) | ✅ Complete |
+| **Phase 5** | Minimal polished UI (Findings list + PDF viewer with highlight) | ⏳ Next |
 | **Phase 6** | Evals & Benchmarks (UNFAIR-ToS eval runner & golden set) | ⏳ Pending |
 
 ## Evaluation Results
@@ -99,8 +99,16 @@ curl -X GET "http://localhost:8000/api/documents/{doc_id}/findings"
 5. **Prompt Grounding & Untrusted Input:** The document clauses are wrapped in `<document>` tags explicitly flagged as untrusted user data. Prompts strictly instruct the model that every quote must be an exact verbatim substring of its cited clause.
 6. **Robust Validation Recovery:** On schema validation failure, the system retries exactly ONCE with the error message fed back. On repeated failure, it logs the failure in `analysis_runs` with `proposed_count=0` and moves on without infinite loops.
 7. **Per-Run Telemetry & Dry-Run Mode:** Every run records model, tokens in/out, cost USD, latency ms, and proposed/rejected counts. The `--dry-run` stubbed mode enables full end-to-end testing without cloud API keys or costs.
-8. **Known Layout Limitations:**
+8. **Deterministic Citation Verification Pipeline (Phase 4 centerpiece):**
+   - **Normalization:** Collapses whitespace, unifies curly quotes (`“` `”` `‘` `’` `‵` `′` $\rightarrow$ `"` `'`), unifies all Unicode dashes (`–` `—` `−` `―` $\rightarrow$ `-`), strips surrounding spaces around hyphens, and lowercases.
+   - **Stage 1 (Exact Substring):** If normalized quote is an exact substring of the cited clause $\rightarrow$ status `verified` (`match_score = 100.0`).
+   - **Stage 2 (Fuzzy Near-Miss):** If `rapidfuzz.fuzz.partial_ratio >= 90.0` against the cited clause $\rightarrow$ status `verified_fuzzy` (persisting exact `match_score`).
+   - **Stage 3 (Re-Anchoring):** If the quote is not in the cited clause, searches ALL other clauses. If found $\rightarrow$ updates `clause_id` to the matching clause and marks status `reanchored`.
+   - **Stage 4 (Rejection & Grounding Guarantee):** Else $\rightarrow$ marks `rejected`. **Rejected findings are NEVER stored in the database and NEVER returned in the API / UI.** Nonexistent clause IDs are safely rejected without crashing.
+   - **Grounding Rate Telemetry:** Every run computes and persists `grounding_rate = verified_count / proposed_count` along with `proposed_count`, `verified_count`, and `rejected_count` in `analysis_runs`.
+9. **Known Layout Limitations:**
    - **Multi-column layouts & tables:** Multi-column text flow is currently ingested sequentially in top-to-bottom reading order. Complex magazine-style multi-column text flows and nested HTML/PDF tables are treated as sequential paragraphs rather than performing full geometric 2D column de-warping.
-9. **Database Schema:** SQLite stores `documents`, `clauses`, `findings`, and `analysis_runs` with foreign key enforcement enabled (`PRAGMA foreign_keys = ON`).
+10. **Database Schema:** SQLite stores `documents`, `clauses`, `findings`, and `analysis_runs` with foreign key enforcement enabled (`PRAGMA foreign_keys = ON`).
+
 
 
