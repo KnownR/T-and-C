@@ -55,7 +55,7 @@ export interface FindingModel {
   explanation: string;
   clause_id: string;
   quote: string;
-  verification_status: "verified" | "verified_fuzzy" | "reanchored" | "rejected";
+  verification_status: "verified" | "verified_fuzzy" | "reanchored" | "rejected" | string;
   verification_details?: string | null;
   match_score?: number | null;
 }
