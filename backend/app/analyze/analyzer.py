@@ -46,6 +46,7 @@ from backend.app.verify import verify_findings
 # Single configuration location for default analysis model
 DEFAULT_ANALYSIS_MODEL = "ollama/qwen2.5:3b-instruct"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_NUM_CTX = 8192
 
 
 def is_ollama_model(model: str) -> bool:
@@ -70,6 +71,35 @@ def is_ollama_connection_error(exc: Exception) -> bool:
         "connection error",
     ]
     return any(kw in exc_str for kw in keywords)
+
+
+def is_num_ctx_rejected_error(exc: Exception) -> bool:
+    """Check if exception was caused by a model/server rejecting num_ctx."""
+    if is_ollama_connection_error(exc):
+        return False
+    exc_str = str(exc).lower()
+    keywords = [
+        "num_ctx",
+        "unrecognized option",
+        "unknown option",
+        "invalid option",
+        "unknown parameter",
+        "invalid parameter",
+        "extra_body",
+        "context length",
+        "context window",
+        "not supported",
+    ]
+    if any(kw in exc_str for kw in keywords):
+        return True
+    return isinstance(
+        exc,
+        (
+            litellm.exceptions.BadRequestError,
+            litellm.exceptions.InvalidRequestError,
+            litellm.exceptions.UnprocessableEntityError,
+        ),
+    )
 
 
 def is_transient_error(exc: Exception) -> bool:
@@ -138,6 +168,7 @@ def completion_with_backoff(
     temperature: Optional[float] = 0.0,
     max_tokens: Optional[int] = 4096,
     api_base: Optional[str] = None,
+    extra_body: Optional[dict[str, Any]] = None,
     max_transient_retries: Optional[int] = None,
     base_delay: Optional[float] = None,
     max_delay: Optional[float] = None,
@@ -148,6 +179,7 @@ def completion_with_backoff(
     Prevents nested retries by disabling internal LiteLLM retries (num_retries=0).
     Fails immediately without retries for permanent errors (401, 403, 404, 400)
     and provides clear graceful errors if local Ollama is unreachable.
+    Passes num_ctx=8192 for ollama/* models with graceful fallback if rejected.
     """
     if max_transient_retries is None:
         max_transient_retries = int(os.environ.get("ANALYSIS_MAX_TRANSIENT_RETRIES", "4"))
@@ -164,6 +196,10 @@ def completion_with_backoff(
     if effective_api_base is None and is_ollama_model(model):
         effective_api_base = os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
 
+    effective_extra_body = dict(extra_body) if extra_body is not None else {}
+    if is_ollama_model(model) and "num_ctx" not in effective_extra_body:
+        effective_extra_body["num_ctx"] = DEFAULT_OLLAMA_NUM_CTX
+
     for attempt in range(1, total_attempts + 1):
         try:
             kwargs: dict[str, Any] = {
@@ -179,8 +215,27 @@ def completion_with_backoff(
                 kwargs["max_tokens"] = max_tokens
             if effective_api_base is not None:
                 kwargs["api_base"] = effective_api_base
+            if effective_extra_body:
+                kwargs["extra_body"] = dict(effective_extra_body)
 
-            return litellm.completion(**kwargs)
+            try:
+                return litellm.completion(**kwargs)
+            except Exception as call_exc:
+                if (
+                    "extra_body" in kwargs
+                    and "num_ctx" in kwargs["extra_body"]
+                    and is_num_ctx_rejected_error(call_exc)
+                ):
+                    fallback_kwargs = dict(kwargs)
+                    fallback_extra_body = dict(kwargs["extra_body"])
+                    fallback_extra_body.pop("num_ctx", None)
+                    if fallback_extra_body:
+                        fallback_kwargs["extra_body"] = fallback_extra_body
+                    else:
+                        fallback_kwargs.pop("extra_body", None)
+                    effective_extra_body = fallback_extra_body
+                    return litellm.completion(**fallback_kwargs)
+                raise
 
         except Exception as exc:
             if is_ollama_model(model) and is_ollama_connection_error(exc):
@@ -367,6 +422,7 @@ def analyze_document(
     temperature: Optional[float] = 0.0,
     max_tokens: Optional[int] = 4096,
     api_base: Optional[str] = None,
+    extra_body: Optional[dict[str, Any]] = None,
 ) -> tuple[AnalysisRunRecord, list[FindingRecord]]:
     """Perform structured legal analysis on a document's clauses.
 
@@ -383,6 +439,7 @@ def analyze_document(
         temperature: Temperature for deterministic quoting (default 0.0).
         max_tokens: Token generation limit (default 4096).
         api_base: Optional base URL for Ollama or custom endpoint.
+        extra_body: Optional extra payload options passed to LiteLLM (e.g. num_ctx=8192).
 
     Returns:
         tuple[AnalysisRunRecord, list[FindingRecord]]
@@ -472,6 +529,7 @@ def analyze_document(
             temperature=temperature,
             max_tokens=max_tokens,
             api_base=effective_api_base,
+            extra_body=extra_body,
             max_transient_retries=max_transient_retries,
             sleep_fn=sleep_fn,
         )

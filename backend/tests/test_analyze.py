@@ -676,12 +676,14 @@ def test_ollama_litellm_call_parameters(monkeypatch):
     assert captured_kwargs.get("max_tokens") is not None and captured_kwargs.get("max_tokens") >= 1024
     assert captured_kwargs.get("response_format") == {"type": "json_object"}
     assert captured_kwargs.get("api_base") == "http://localhost:11434"
+    assert captured_kwargs.get("extra_body") == {"num_ctx": 8192}
     assert captured_kwargs.get("num_retries") == 0
 
     # 2. Overridden OLLAMA_BASE_URL
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://192.168.1.50:11434")
     analyze_document(doc, clauses, dry_run=False, model="ollama/qwen2.5:3b-instruct")
     assert captured_kwargs.get("api_base") == "http://192.168.1.50:11434"
+    assert captured_kwargs.get("extra_body") == {"num_ctx": 8192}
 
 
 def test_ollama_cost_is_zero(monkeypatch):
@@ -772,6 +774,68 @@ def test_dry_run_works_with_no_network_and_no_ollama(monkeypatch):
     assert run.cost_usd == 0.0
     assert run.proposed_count > 0
     assert len(findings) > 0
+
+
+def test_ollama_num_ctx_sent_and_fallback_on_rejection(monkeypatch):
+    """Verify that num_ctx=8192 is passed for ollama/* models in extra_body,
+    non-ollama models do NOT receive num_ctx by default,
+    and if a model rejects num_ctx, it gracefully falls back without num_ctx.
+    Also asserts that --dry-run remains fully offline.
+    """
+    import litellm.exceptions as ex
+
+    captured_calls = []
+
+    def mock_completion(*args, **kwargs):
+        captured_calls.append(kwargs)
+        # First call with num_ctx raises BadRequestError (simulating model rejection of num_ctx)
+        if kwargs.get("extra_body", {}).get("num_ctx") == 8192:
+            raise ex.BadRequestError(
+                message="unrecognized option 'num_ctx'",
+                model="ollama/qwen2.5:3b-instruct",
+                llm_provider="ollama",
+            )
+        # Fallback call without num_ctx succeeds
+        mock_resp = MagicMock()
+        mock_resp.usage.prompt_tokens = 60
+        mock_resp.usage.completion_tokens = 30
+        mock_resp.choices = [
+            MagicMock(
+                message=MagicMock(
+                    content='{"findings": [{"category": "unilateral_change", "severity": "red", "title": "Change", "explanation": "unilateral", "clause_id": "C-1", "quote": "We may update terms."}]}'
+                )
+            )
+        ]
+        return mock_resp
+
+    monkeypatch.setattr("litellm.completion", mock_completion)
+
+    doc = DocumentRecord(id="doc_fallback", source_type="text", raw_text="We may update terms.")
+    save_document(doc)
+    clauses = [ClauseRecord(id="C-1", document_id="doc_fallback", ordinal=1, text="We may update terms.", page=1)]
+    save_clauses(clauses)
+
+    run, findings = analyze_document(doc, clauses, dry_run=False, model="ollama/qwen2.5:3b-instruct")
+
+    assert len(captured_calls) == 2, "Must attempt call with num_ctx and fallback on rejection"
+    assert captured_calls[0].get("extra_body") == {"num_ctx": 8192}
+    assert "num_ctx" not in (captured_calls[1].get("extra_body") or {})
+    assert len(findings) == 1
+    assert findings[0].category == "unilateral_change"
+
+    # Verify non-ollama model does not receive num_ctx in extra_body
+    captured_calls.clear()
+    analyze_document(doc, clauses, dry_run=False, model="gemini/gemini-3.8-flash")
+    assert "num_ctx" not in (captured_calls[0].get("extra_body") or {})
+
+    # Verify dry-run remains fully offline
+    def forbid_network(*args, **kwargs):
+        raise AssertionError("Network / litellm.completion must never be called during dry-run!")
+
+    monkeypatch.setattr("litellm.completion", forbid_network)
+    dry_run_record, dry_run_findings = analyze_document(doc, clauses, dry_run=True)
+    assert dry_run_record.model == "dry-run-stub"
+    assert dry_run_record.cost_usd == 0.0
 
 
 
