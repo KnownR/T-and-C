@@ -66,7 +66,8 @@ def build_analysis_prompt(
         "    }\n"
         "  ]\n"
         "}\n"
-        "If no clauses match any category in the rubric, return {\"findings\": []}."
+        'If no clauses match any category in the rubric, return {"findings": []}.\n'
+        "Explanations: maximum 2 sentences each. Output only the JSON, no prose, no markdown fences."
     )
 
     user_prompt = (

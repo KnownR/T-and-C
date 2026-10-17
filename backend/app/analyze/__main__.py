@@ -33,6 +33,11 @@ def main() -> None:
         default=default_model,
         help=f"LiteLLM model identifier (default: env ANALYZE_MODEL or {DEFAULT_ANALYSIS_MODEL}).",
     )
+    parser.add_argument(
+        "--debug-raw",
+        action="store_true",
+        help="Write raw model response per call to a debug log file tied to the run ID.",
+    )
     args = parser.parse_args()
 
     init_db()
@@ -58,6 +63,7 @@ def main() -> None:
             lens_id=args.lens,
             dry_run=args.dry_run,
             model=args.model,
+            debug_raw=args.debug_raw,
         )
     except Exception as exc:
         print(f"\n[Error] Analysis failed: {exc}")
@@ -75,6 +81,14 @@ def main() -> None:
     print(f"Tokens In/Out:   {run.tokens_in} / {run.tokens_out}")
     print(f"Cost (USD):      ${run.cost_usd:.4f}")
     print(f"Latency:         {run.latency_ms:.1f} ms")
+    is_debug_raw = (
+        args.debug_raw
+        or os.environ.get("ANALYZE_DEBUG_RAW", "").lower() in ("1", "true", "yes")
+        or os.environ.get("DEBUG_RAW", "").lower() in ("1", "true", "yes")
+    )
+    if is_debug_raw and not args.dry_run:
+        debug_dir = os.environ.get("ANALYZE_DEBUG_DIR", "debug_logs")
+        print(f"Debug Raw Log:   {debug_dir}/raw_{run.id}.log")
     print(f"\n--- Verified Findings ({len(findings)}) ---")
     for idx, f in enumerate(findings, 1):
         print(f"\n[{idx}] [{f.severity.upper()}] [{f.verification_status.upper()}] {f.title} ({f.category}) - Clause {f.clause_id}")

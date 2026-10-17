@@ -27,5 +27,7 @@ dist/
 !.env.example
 .env.local
 .DS_Store
-Thumbs.db
+# Logs and debug
+debug_logs/
+*.log
 

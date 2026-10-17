@@ -673,7 +673,7 @@ def test_ollama_litellm_call_parameters(monkeypatch):
 
     assert captured_kwargs.get("model") == "ollama/qwen2.5:3b-instruct"
     assert captured_kwargs.get("temperature") == 0.0 or captured_kwargs.get("temperature") <= 0.2
-    assert captured_kwargs.get("max_tokens") is not None and captured_kwargs.get("max_tokens") >= 1024
+    assert captured_kwargs.get("max_tokens") == 8192
     assert captured_kwargs.get("response_format") == {"type": "json_object"}
     assert captured_kwargs.get("api_base") == "http://localhost:11434"
     assert captured_kwargs.get("extra_body") == {"num_ctx": 8192}
@@ -684,6 +684,7 @@ def test_ollama_litellm_call_parameters(monkeypatch):
     analyze_document(doc, clauses, dry_run=False, model="ollama/qwen2.5:3b-instruct")
     assert captured_kwargs.get("api_base") == "http://192.168.1.50:11434"
     assert captured_kwargs.get("extra_body") == {"num_ctx": 8192}
+    assert captured_kwargs.get("max_tokens") == 8192
 
 
 def test_ollama_cost_is_zero(monkeypatch):
@@ -836,6 +837,165 @@ def test_ollama_num_ctx_sent_and_fallback_on_rejection(monkeypatch):
     dry_run_record, dry_run_findings = analyze_document(doc, clauses, dry_run=True)
     assert dry_run_record.model == "dry-run-stub"
     assert dry_run_record.cost_usd == 0.0
+
+
+def test_ollama_max_tokens_override_via_env(monkeypatch):
+    """Verify max_tokens defaults to 8192 for Ollama models, 4096 for others,
+    and can be configured via ANALYZE_MAX_TOKENS env var.
+    """
+    captured_kwargs = {}
+
+    def mock_completion(*args, **kwargs):
+        nonlocal captured_kwargs
+        captured_kwargs = kwargs
+        mock_resp = MagicMock()
+        mock_resp.usage.prompt_tokens = 50
+        mock_resp.usage.completion_tokens = 10
+        mock_resp.choices = [MagicMock(message=MagicMock(content='{"findings": []}'))]
+        return mock_resp
+
+    monkeypatch.setattr("litellm.completion", mock_completion)
+
+    doc = DocumentRecord(id="doc_mt_test", source_type="text", raw_text="Sample terms.")
+    save_document(doc)
+    clauses = [ClauseRecord(id="C-1", document_id="doc_mt_test", ordinal=1, text="Sample terms.", page=1)]
+    save_clauses(clauses)
+
+    # 1. Default for Ollama is 8192
+    monkeypatch.delenv("ANALYZE_MAX_TOKENS", raising=False)
+    analyze_document(doc, clauses, dry_run=False, model="ollama/qwen2.5:3b-instruct")
+    assert captured_kwargs.get("max_tokens") == 8192
+
+    # 2. Configurable via ANALYZE_MAX_TOKENS
+    monkeypatch.setenv("ANALYZE_MAX_TOKENS", "16384")
+    analyze_document(doc, clauses, dry_run=False, model="ollama/qwen2.5:3b-instruct")
+    assert captured_kwargs.get("max_tokens") == 16384
+
+    # 3. Default for non-ollama is 4096 when ANALYZE_MAX_TOKENS is unset
+    monkeypatch.delenv("ANALYZE_MAX_TOKENS", raising=False)
+    analyze_document(doc, clauses, dry_run=False, model="gemini/gemini-3.8-flash")
+    assert captured_kwargs.get("max_tokens") == 4096
+
+
+def test_raw_response_debug_logging(tmp_path, monkeypatch):
+    """Verify that --debug-raw (or env var) writes raw model output per call
+    to a log file tied to the analysis_runs record (raw_{run_id}.log).
+    """
+    call_count = 0
+    debug_dir = tmp_path / "custom_debug_logs"
+
+    def mock_completion(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        mock_resp = MagicMock()
+        mock_resp.usage.prompt_tokens = 100
+        mock_resp.usage.completion_tokens = 30
+        if call_count == 1:
+            # First attempt returns invalid output to trigger retry
+            mock_resp.choices = [
+                MagicMock(
+                    message=MagicMock(
+                        content='{"findings": [{"category": "invalid_category", "severity": "red", "title": "Bad", "explanation": "x", "clause_id": "C-1", "quote": "Agree"}]}'
+                    )
+                )
+            ]
+        else:
+            # Second attempt returns valid schema
+            mock_resp.choices = [
+                MagicMock(
+                    message=MagicMock(
+                        content='{"findings": [{"category": "arbitration", "severity": "red", "title": "Arbitration", "explanation": "Short note.", "clause_id": "C-1", "quote": "Agree to arbitration."}]}'
+                    )
+                )
+            ]
+        return mock_resp
+
+    monkeypatch.setattr("litellm.completion", mock_completion)
+
+    doc = DocumentRecord(id="doc_debug_raw", source_type="text", raw_text="Agree to arbitration.")
+    save_document(doc)
+    clauses = [ClauseRecord(id="C-1", document_id="doc_debug_raw", ordinal=1, text="Agree to arbitration.", page=1)]
+    save_clauses(clauses)
+
+    # 1. Test via debug_raw=True argument
+    run, findings = analyze_document(
+        doc,
+        clauses,
+        dry_run=False,
+        debug_raw=True,
+        debug_dir=debug_dir,
+    )
+
+    log_file = debug_dir / f"raw_{run.id}.log"
+    assert log_file.exists(), f"Debug raw log file {log_file} must be created"
+    log_content = log_file.read_text(encoding="utf-8")
+    assert run.id in log_content
+    assert "Attempt 1" in log_content
+    assert "invalid_category" in log_content
+    assert "Attempt 2" in log_content
+    assert "Agree to arbitration." in log_content
+
+    # 2. Test via env var ANALYZE_DEBUG_RAW=1
+    monkeypatch.setenv("ANALYZE_DEBUG_RAW", "1")
+    monkeypatch.setenv("ANALYZE_DEBUG_DIR", str(debug_dir))
+    call_count = 1  # will jump to valid on attempt 2
+    run2, findings2 = analyze_document(
+        doc,
+        clauses,
+        dry_run=False,
+        debug_raw=False,  # explicit False in arg overridden by env var
+    )
+    log_file2 = debug_dir / f"raw_{run2.id}.log"
+    assert log_file2.exists()
+    assert run2.id in log_file2.read_text(encoding="utf-8")
+
+    # 3. Verify dry-run stays completely offline even if debug_raw=True
+    def forbid_network(*args, **kwargs):
+        raise AssertionError("Network / litellm.completion must never be called during dry-run!")
+
+    monkeypatch.setattr("litellm.completion", forbid_network)
+    dry_run, dry_findings = analyze_document(
+        doc,
+        clauses,
+        dry_run=True,
+        debug_raw=True,
+        debug_dir=debug_dir,
+    )
+    assert dry_run.model == "dry-run-stub"
+
+
+def test_tightened_prompt_and_verbatim_quote_instruction():
+    """Verify the prompt contains the tightening constraint for local models:
+    'Explanations: maximum 2 sentences each. Output only the JSON, no prose, no markdown fences.'
+    and that the verbatim-quote instruction remains untouched.
+    """
+    lens = load_lens("tos")
+    clauses = [
+        ClauseRecord(
+            id="C-1",
+            document_id="doc_prompt_check",
+            ordinal=1,
+            text="Service may be terminated at our discretion.",
+            page=1,
+        )
+    ]
+    system_prompt, user_prompt = build_analysis_prompt(lens, clauses)
+
+    # Tightened prompt instruction exists
+    assert (
+        "Explanations: maximum 2 sentences each. Output only the JSON, no prose, no markdown fences."
+        in system_prompt
+    )
+
+    # Verbatim quote instruction remains untouched
+    assert (
+        "2. VERBATIM SUBSTRING REQUIREMENT: Every quote must be an exact verbatim substring of its cited clause. "
+        "Copy quotes exactly character-for-character from the clause, including punctuation — never paraphrase, "
+        "summarize, reconstruct, or alter words, capitalization, or punctuation. "
+        "Every quote will be verified against the clause text character-for-character."
+        in system_prompt
+    )
+
 
 
 

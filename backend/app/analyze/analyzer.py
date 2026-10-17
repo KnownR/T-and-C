@@ -17,7 +17,7 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -47,6 +47,24 @@ from backend.app.verify import verify_findings
 DEFAULT_ANALYSIS_MODEL = "ollama/qwen2.5:3b-instruct"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_NUM_CTX = 8192
+DEFAULT_OLLAMA_MAX_TOKENS = 8192
+DEFAULT_MAX_TOKENS = 4096
+
+
+def get_default_max_tokens(model: str) -> int:
+    """Get the default max_tokens generation cap for a model.
+
+    Configurable via ANALYZE_MAX_TOKENS env var (default 8192 for ollama models, 4096 otherwise).
+    """
+    env_tokens = os.environ.get("ANALYZE_MAX_TOKENS")
+    if env_tokens is not None:
+        try:
+            return int(env_tokens)
+        except ValueError:
+            pass
+    if is_ollama_model(model):
+        return DEFAULT_OLLAMA_MAX_TOKENS
+    return DEFAULT_MAX_TOKENS
 
 
 def is_ollama_model(model: str) -> bool:
@@ -166,7 +184,7 @@ def completion_with_backoff(
     messages: list[dict[str, str]],
     response_format: Optional[dict[str, Any]] = None,
     temperature: Optional[float] = 0.0,
-    max_tokens: Optional[int] = 4096,
+    max_tokens: Optional[int] = None,
     api_base: Optional[str] = None,
     extra_body: Optional[dict[str, Any]] = None,
     max_transient_retries: Optional[int] = None,
@@ -179,7 +197,7 @@ def completion_with_backoff(
     Prevents nested retries by disabling internal LiteLLM retries (num_retries=0).
     Fails immediately without retries for permanent errors (401, 403, 404, 400)
     and provides clear graceful errors if local Ollama is unreachable.
-    Passes num_ctx=8192 for ollama/* models with graceful fallback if rejected.
+    Passes num_ctx=8192 and max_tokens=8192 for ollama/* models with graceful fallback if rejected.
     """
     if max_transient_retries is None:
         max_transient_retries = int(os.environ.get("ANALYSIS_MAX_TRANSIENT_RETRIES", "4"))
@@ -191,6 +209,10 @@ def completion_with_backoff(
         sleep_fn = time.sleep
 
     total_attempts = 1 + max(0, max_transient_retries)
+
+    effective_max_tokens = (
+        max_tokens if max_tokens is not None else get_default_max_tokens(model)
+    )
 
     effective_api_base = api_base
     if effective_api_base is None and is_ollama_model(model):
@@ -211,8 +233,8 @@ def completion_with_backoff(
                 kwargs["response_format"] = response_format
             if temperature is not None:
                 kwargs["temperature"] = temperature
-            if max_tokens is not None:
-                kwargs["max_tokens"] = max_tokens
+            if effective_max_tokens is not None:
+                kwargs["max_tokens"] = effective_max_tokens
             if effective_api_base is not None:
                 kwargs["api_base"] = effective_api_base
             if effective_extra_body:
@@ -420,9 +442,11 @@ def analyze_document(
     max_transient_retries: Optional[int] = None,
     sleep_fn: Optional[Callable[[float], None]] = None,
     temperature: Optional[float] = 0.0,
-    max_tokens: Optional[int] = 4096,
+    max_tokens: Optional[int] = None,
     api_base: Optional[str] = None,
     extra_body: Optional[dict[str, Any]] = None,
+    debug_raw: bool = False,
+    debug_dir: Optional[Union[str, Path]] = None,
 ) -> tuple[AnalysisRunRecord, list[FindingRecord]]:
     """Perform structured legal analysis on a document's clauses.
 
@@ -437,9 +461,11 @@ def analyze_document(
         max_transient_retries: Number of retries on transient errors (HTTP 503, 429, etc.).
         sleep_fn: Optional sleep function for backoff delays (default time.sleep).
         temperature: Temperature for deterministic quoting (default 0.0).
-        max_tokens: Token generation limit (default 4096).
+        max_tokens: Token generation limit (default 8192 for ollama, 4096 otherwise; env ANALYZE_MAX_TOKENS).
         api_base: Optional base URL for Ollama or custom endpoint.
         extra_body: Optional extra payload options passed to LiteLLM (e.g. num_ctx=8192).
+        debug_raw: If True, writes raw model responses per call to a log file tied to the run ID.
+        debug_dir: Optional directory for raw debug output (default env ANALYZE_DEBUG_DIR or 'debug_logs').
 
     Returns:
         tuple[AnalysisRunRecord, list[FindingRecord]]
@@ -506,6 +532,25 @@ def analyze_document(
         os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL) if is_ollama else None
     )
 
+    effective_max_tokens = (
+        max_tokens if max_tokens is not None else get_default_max_tokens(model_name)
+    )
+
+    is_debug_raw = (
+        debug_raw
+        or os.environ.get("ANALYZE_DEBUG_RAW", "").lower() in ("1", "true", "yes")
+        or os.environ.get("DEBUG_RAW", "").lower() in ("1", "true", "yes")
+    )
+    raw_log_path: Optional[Path] = None
+    if is_debug_raw:
+        resolved_debug_dir = (
+            Path(debug_dir)
+            if debug_dir
+            else Path(os.environ.get("ANALYZE_DEBUG_DIR", "debug_logs"))
+        )
+        resolved_debug_dir.mkdir(parents=True, exist_ok=True)
+        raw_log_path = resolved_debug_dir / f"raw_{run_id}.log"
+
     system_prompt, user_prompt = build_analysis_prompt(lens_data, clauses)
 
     messages = [
@@ -527,7 +572,7 @@ def analyze_document(
             messages=messages,
             response_format={"type": "json_object"},
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_tokens=effective_max_tokens,
             api_base=effective_api_base,
             extra_body=extra_body,
             max_transient_retries=max_transient_retries,
@@ -552,6 +597,14 @@ def analyze_document(
         if hasattr(resp, "choices") and resp.choices:
             raw_content = resp.choices[0].message.content or ""
 
+        if is_debug_raw and raw_log_path is not None:
+            with open(raw_log_path, "a", encoding="utf-8") as f:
+                f.write(
+                    f"=== Call Attempt {attempts} | Run: {run_id} | Model: {model_name} ===\n"
+                )
+                f.write(raw_content)
+                f.write("\n\n")
+
         # Clean potential markdown code blocks
         clean_content = raw_content.strip()
         if clean_content.startswith("```"):
@@ -572,7 +625,8 @@ def analyze_document(
                         "content": (
                             f"Schema validation failed: {err}\n"
                             "Please correct your response to strictly adhere to the required JSON format:\n"
-                            '{"findings": [{"category": ..., "severity": ..., "title": ..., "explanation": ..., "clause_id": ..., "quote": ...}]}'
+                            '{"findings": [{"category": ..., "severity": ..., "title": ..., "explanation": ..., "clause_id": ..., "quote": ...}]}\n'
+                            "Explanations: maximum 2 sentences each. Output only the JSON, no prose, no markdown fences."
                         ),
                     }
                 )
