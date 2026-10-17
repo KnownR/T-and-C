@@ -124,15 +124,24 @@ class DocumentRecord(BaseModel):
 
 
 def save_document(record: DocumentRecord, db_path: Optional[str] = None) -> DocumentRecord:
-    """Insert or replace a document record."""
+    """Insert or update a document record without triggering foreign key cascade deletion."""
     conn = get_db_connection(db_path)
     try:
         with conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO documents (
+                INSERT INTO documents (
                     id, filename, source_type, sha256, page_count, raw_text, spans, status, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    filename = excluded.filename,
+                    source_type = excluded.source_type,
+                    sha256 = excluded.sha256,
+                    page_count = excluded.page_count,
+                    raw_text = excluded.raw_text,
+                    spans = excluded.spans,
+                    status = excluded.status,
+                    created_at = excluded.created_at
                 """,
                 (
                     record.id,
@@ -147,6 +156,16 @@ def save_document(record: DocumentRecord, db_path: Optional[str] = None) -> Docu
                 ),
             )
         return record
+    finally:
+        conn.close()
+
+
+def update_document_status(doc_id: str, status: str, db_path: Optional[str] = None) -> None:
+    """Update document processing status without touching other fields."""
+    conn = get_db_connection(db_path)
+    try:
+        with conn:
+            conn.execute("UPDATE documents SET status = ? WHERE id = ?", (status, doc_id))
     finally:
         conn.close()
 

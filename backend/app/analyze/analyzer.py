@@ -24,9 +24,16 @@ ROOT_DIR = Path(__file__).resolve().parents[3]
 load_dotenv(ROOT_DIR / ".env")
 load_dotenv()
 
+# Keep LiteLLM cost map queries offline to prevent network timeouts and background thread issues
+os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
+os.environ["LITELLM_DISABLE_REDACT_SECRETS"] = "true"
+
 import random
 import litellm
 import litellm.exceptions
+
+litellm.suppress_debug_info = True
+
 from pydantic import ValidationError
 
 

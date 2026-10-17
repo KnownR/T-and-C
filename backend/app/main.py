@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 ROOT_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT_DIR / ".env")
 load_dotenv()
+os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
+os.environ["LITELLM_DISABLE_REDACT_SECRETS"] = "true"
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,13 +22,16 @@ from backend.app.db import (
     DocumentRecord,
     get_clauses,
     get_document,
+    get_findings,
     init_db,
     save_clauses,
     save_document,
+    update_document_status,
 )
 from backend.app.ingest.pdf import extract_spans_from_pdf
 from backend.app.ingest.text import extract_spans_from_text
 from backend.app.segment.splitter import split_document_into_clauses
+from backend.app.analyze.analyzer import analyze_document
 
 
 
@@ -257,7 +262,7 @@ def analyze_document_endpoint(
         )
         save_clauses(clauses)
 
-    from backend.app.analyze.analyzer import analyze_document
+    update_document_status(doc.id, "analyzing")
 
     try:
         run, findings = analyze_document(
@@ -267,7 +272,9 @@ def analyze_document_endpoint(
             dry_run=dry_run,
             model=model,
         )
+        update_document_status(doc.id, "analyzed")
     except Exception as e:
+        update_document_status(doc.id, "failed")
         raise HTTPException(
             status_code=500,
             detail=f"Analysis failed: {str(e)}",
@@ -285,8 +292,6 @@ def get_document_findings_endpoint(
     analysis_run_id: Optional[str] = None,
 ) -> list[FindingModel]:
     """Retrieve findings for a document, optionally filtered by analysis_run_id."""
-    from backend.app.db import get_findings
-
     doc = get_document(doc_id)
     if not doc:
         raise HTTPException(
