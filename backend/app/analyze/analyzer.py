@@ -44,7 +44,7 @@ from backend.app.db import (
 from backend.app.verify import verify_findings
 
 # Single configuration location for default analysis model
-DEFAULT_ANALYSIS_MODEL = "ollama/qwen2.5:3b-instruct"
+DEFAULT_ANALYSIS_MODEL = "ollama/qwen2.5:7b-instruct"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_NUM_CTX = 8192
 DEFAULT_OLLAMA_MAX_TOKENS = 8192
@@ -580,6 +580,11 @@ def analyze_document(
         )
 
         if hasattr(resp, "usage") and resp.usage:
+            # Note on tokens_in: LiteLLM maps Ollama's prompt_eval_count to prompt_tokens.
+            # In single-attempt clean runs (e.g. 7B single-pass), tokens_in is ~1,232 for cloud_service_tos.pdf.
+            # When validation retries fire (as observed on 3B truncation), total_tokens_in accumulates
+            # prompt tokens across both attempts (1,232 + 2,029 = ~3,261 tokens).
+            # Additionally, Ollama prompt caching (KV reuse) reports only evaluated tokens on warm cache hits.
             total_tokens_in += getattr(resp.usage, "prompt_tokens", 0) or 0
             total_tokens_out += getattr(resp.usage, "completion_tokens", 0) or 0
 

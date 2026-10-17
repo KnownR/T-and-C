@@ -442,10 +442,10 @@ def test_app_starts_and_analyzes_without_any_api_keys_present(client, monkeypatc
 
 
 def test_default_model_is_ollama_and_overridable(monkeypatch):
-    """Verify default model is ollama/qwen2.5:3b-instruct with ollama/ prefix, and overridable via ANALYZE_MODEL."""
+    """Verify default model is ollama/qwen2.5:7b-instruct with ollama/ prefix, and overridable via ANALYZE_MODEL."""
     from backend.app.analyze import DEFAULT_ANALYSIS_MODEL
 
-    assert DEFAULT_ANALYSIS_MODEL == "ollama/qwen2.5:3b-instruct"
+    assert DEFAULT_ANALYSIS_MODEL == "ollama/qwen2.5:7b-instruct"
     assert DEFAULT_ANALYSIS_MODEL.startswith("ollama/")
 
     captured_model = None
@@ -461,7 +461,7 @@ def test_default_model_is_ollama_and_overridable(monkeypatch):
 
     monkeypatch.setattr("litellm.completion", mock_completion)
 
-    # 1. Without env override, defaults to ollama/qwen2.5:3b-instruct
+    # 1. Without env override, defaults to ollama/qwen2.5:7b-instruct
     monkeypatch.delenv("ANALYZE_MODEL", raising=False)
     monkeypatch.delenv("ANALYSIS_MODEL", raising=False)
     doc = DocumentRecord(id="doc_m1", source_type="text", raw_text="Sample terms.")
@@ -469,7 +469,7 @@ def test_default_model_is_ollama_and_overridable(monkeypatch):
     clauses = [ClauseRecord(id="C-1", document_id="doc_m1", ordinal=1, text="Sample terms.", page=1)]
     save_clauses(clauses)
     analyze_document(doc, clauses, dry_run=False)
-    assert captured_model == "ollama/qwen2.5:3b-instruct"
+    assert captured_model == "ollama/qwen2.5:7b-instruct"
 
     # 2. With ANALYZE_MODEL override
     monkeypatch.setenv("ANALYZE_MODEL", "ollama/llama3.2:3b")
