@@ -2,6 +2,8 @@
 
 > A local-first tool that ingests Terms of Service documents, segments them into clauses, detects unfair clauses with an LLM, **verifies every claim against the source text deterministically**, and displays findings with clickable citations.
 
+![What Did I Agree To? Demo](docs/demo.gif)
+
 ## Engineering Principle
 **The LLM proposes; deterministic code verifies.**
 No finding is ever displayed in the UI without a verified quote matching the original source text.
@@ -20,8 +22,8 @@ No finding is ever displayed in the UI without a verified quote matching the ori
 | **Phase 3** | Analysis with structured output (8 UNFAIR-ToS categories, prompt from YAML, LiteLLM + dry-run) | ✅ Complete |
 | **Phase 4** | Citation verifier (Exact $\rightarrow$ fuzzy $\rightarrow$ re-anchor $\rightarrow$ reject, grounding rate metrics) | ✅ Complete |
 | **Phase 5** | Local LLM via Ollama (`ollama/qwen2.5:7b-instruct` default via LiteLLM adapter, $0 cost telemetry) | ✅ Complete |
-| **Phase 6** | Minimal polished UI (Findings list + PDF viewer with highlight) | ⏳ Next |
-| **Phase 7** | Evals & Benchmarks (UNFAIR-ToS eval runner & golden set) | ⏳ Pending |
+| **Phase 6** | Minimal polished UI (Findings list + click-to-highlight PDF viewer, error & empty states) | ✅ Complete |
+| **Phase 7** | Evals & Benchmarks (UNFAIR-ToS eval runner & golden set) | ⏳ Next |
 
 ## Evaluation Results
 

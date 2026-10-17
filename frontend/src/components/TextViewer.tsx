@@ -40,9 +40,16 @@ export default function TextViewer({
       {/* Scrollable Clauses Panel */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-zinc-950/80 custom-scrollbar">
         {clauses.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-80 text-zinc-500 text-sm">
-            <FileCode className="w-10 h-10 mb-2 opacity-40" />
-            <p>No clauses segmented.</p>
+          <div className="flex flex-col items-center justify-center h-80 text-zinc-400 text-sm text-center p-6 space-y-3">
+            <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-500">
+              <FileCode className="w-6 h-6 opacity-60" />
+            </div>
+            <div>
+              <p className="font-semibold text-zinc-200">No Clauses Detected</p>
+              <p className="text-xs text-zinc-400 max-w-sm mt-1 leading-relaxed">
+                The submitted text could not be segmented into standard contract clauses. Please ensure the text includes numbered sections (e.g., &ldquo;1. Acceptance&rdquo;, &ldquo;Section 2&rdquo;) or distinct paragraph blocks.
+              </p>
+            </div>
           </div>
         ) : (
           clauses.map((clause) => {

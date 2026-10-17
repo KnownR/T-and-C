@@ -137,9 +137,27 @@ async def create_document(
         file_bytes = await file.read()
         if not file_bytes:
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+        MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB limit
+        if len(file_bytes) > MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds maximum allowed size ({MAX_FILE_SIZE_BYTES // (1024 * 1024)}MB). Please upload a smaller document.",
+            )
         doc_name = file.filename or "uploaded.pdf"
-        if doc_name.lower().endswith(".pdf") or file.content_type == "application/pdf":
-            parsed = extract_spans_from_pdf(file_bytes, filename=doc_name)
+        ext = Path(doc_name).suffix.lower()
+        if ext not in (".pdf", ".txt"):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unsupported file format '{ext or 'unknown'}'. Please upload a PDF (.pdf) or Plain Text (.txt) file.",
+            )
+        if ext == ".pdf" or file.content_type == "application/pdf":
+            try:
+                parsed = extract_spans_from_pdf(file_bytes, filename=doc_name)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Failed to process PDF: {str(e)}. Please ensure the file is a valid PDF.",
+                )
         else:
             decoded_text = file_bytes.decode("utf-8", errors="replace")
             parsed = extract_spans_from_text(decoded_text, filename=doc_name)
@@ -275,9 +293,19 @@ def analyze_document_endpoint(
         update_document_status(doc.id, "analyzed")
     except Exception as e:
         update_document_status(doc.id, "failed")
+        err_msg = str(e)
+        if (
+            "ollama not reachable" in err_msg.lower()
+            or "actively refused" in err_msg.lower()
+            or "apiconnectionerror" in err_msg.lower()
+            or "failed to connect" in err_msg.lower()
+        ):
+            status_code = status.HTTP_502_BAD_GATEWAY
+        else:
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         raise HTTPException(
-            status_code=500,
-            detail=f"Analysis failed: {str(e)}",
+            status_code=status_code,
+            detail=f"Analysis failed: {err_msg}",
         )
 
     return AnalysisResponse(
