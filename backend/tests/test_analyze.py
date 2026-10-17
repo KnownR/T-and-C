@@ -441,12 +441,12 @@ def test_app_starts_and_analyzes_without_any_api_keys_present(client, monkeypatc
     assert len(findings_resp.json()) == len(data["findings"])
 
 
-def test_default_model_is_gemini_3_8_flash_and_overridable(monkeypatch):
-    """Verify default model is gemini/gemini-3.8-flash with gemini/ prefix, and overridable via ANALYSIS_MODEL."""
+def test_default_model_is_ollama_and_overridable(monkeypatch):
+    """Verify default model is ollama/qwen2.5:3b-instruct with ollama/ prefix, and overridable via ANALYZE_MODEL."""
     from backend.app.analyze import DEFAULT_ANALYSIS_MODEL
 
-    assert DEFAULT_ANALYSIS_MODEL == "gemini/gemini-3.8-flash"
-    assert DEFAULT_ANALYSIS_MODEL.startswith("gemini/")
+    assert DEFAULT_ANALYSIS_MODEL == "ollama/qwen2.5:3b-instruct"
+    assert DEFAULT_ANALYSIS_MODEL.startswith("ollama/")
 
     captured_model = None
 
@@ -461,19 +461,20 @@ def test_default_model_is_gemini_3_8_flash_and_overridable(monkeypatch):
 
     monkeypatch.setattr("litellm.completion", mock_completion)
 
-    # 1. Without env override, defaults to gemini/gemini-3.8-flash
+    # 1. Without env override, defaults to ollama/qwen2.5:3b-instruct
+    monkeypatch.delenv("ANALYZE_MODEL", raising=False)
     monkeypatch.delenv("ANALYSIS_MODEL", raising=False)
     doc = DocumentRecord(id="doc_m1", source_type="text", raw_text="Sample terms.")
     save_document(doc)
     clauses = [ClauseRecord(id="C-1", document_id="doc_m1", ordinal=1, text="Sample terms.", page=1)]
     save_clauses(clauses)
     analyze_document(doc, clauses, dry_run=False)
-    assert captured_model == "gemini/gemini-3.8-flash"
+    assert captured_model == "ollama/qwen2.5:3b-instruct"
 
-    # 2. With ANALYSIS_MODEL override
-    monkeypatch.setenv("ANALYSIS_MODEL", "gemini/gemini-2.0-flash")
+    # 2. With ANALYZE_MODEL override
+    monkeypatch.setenv("ANALYZE_MODEL", "ollama/llama3.2:3b")
     analyze_document(doc, clauses, dry_run=False)
-    assert captured_model == "gemini/gemini-2.0-flash"
+    assert captured_model == "ollama/llama3.2:3b"
 
 
 def test_is_transient_error_classification():
@@ -636,6 +637,141 @@ def test_non_retryable_error_fails_immediately(monkeypatch):
 
     assert call_count == 1, "Must NOT retry on permanent authentication error"
     assert len(sleep_delays) == 0, "Must never sleep on non-retryable errors"
+
+
+# -----------------------------------------------------------------------------
+# 8. Phase 5: Ollama Local LLM Integration Tests
+# -----------------------------------------------------------------------------
+
+def test_ollama_litellm_call_parameters(monkeypatch):
+    """Verify that LiteLLM call for Ollama builds expected params:
+    temperature=0.0 (or <=0.2), max_tokens cap, json_object response_format,
+    api_base targeting Ollama (default http://localhost:11434 or OLLAMA_BASE_URL),
+    and num_retries=0.
+    """
+    captured_kwargs = {}
+
+    def mock_completion(*args, **kwargs):
+        nonlocal captured_kwargs
+        captured_kwargs = kwargs
+        mock_resp = MagicMock()
+        mock_resp.usage.prompt_tokens = 120
+        mock_resp.usage.completion_tokens = 45
+        mock_resp.choices = [MagicMock(message=MagicMock(content='{"findings": []}'))]
+        return mock_resp
+
+    monkeypatch.setattr("litellm.completion", mock_completion)
+
+    doc = DocumentRecord(id="doc_ollama_params", source_type="text", raw_text="Sample terms.")
+    save_document(doc)
+    clauses = [ClauseRecord(id="C-1", document_id="doc_ollama_params", ordinal=1, text="Sample terms.", page=1)]
+    save_clauses(clauses)
+
+    # 1. Default api_base
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    analyze_document(doc, clauses, dry_run=False, model="ollama/qwen2.5:3b-instruct")
+
+    assert captured_kwargs.get("model") == "ollama/qwen2.5:3b-instruct"
+    assert captured_kwargs.get("temperature") == 0.0 or captured_kwargs.get("temperature") <= 0.2
+    assert captured_kwargs.get("max_tokens") is not None and captured_kwargs.get("max_tokens") >= 1024
+    assert captured_kwargs.get("response_format") == {"type": "json_object"}
+    assert captured_kwargs.get("api_base") == "http://localhost:11434"
+    assert captured_kwargs.get("num_retries") == 0
+
+    # 2. Overridden OLLAMA_BASE_URL
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://192.168.1.50:11434")
+    analyze_document(doc, clauses, dry_run=False, model="ollama/qwen2.5:3b-instruct")
+    assert captured_kwargs.get("api_base") == "http://192.168.1.50:11434"
+
+
+def test_ollama_cost_is_zero(monkeypatch):
+    """Verify that telemetry records cost_usd=0.0 for any ollama/* model."""
+    def mock_completion(*args, **kwargs):
+        mock_resp = MagicMock()
+        mock_resp.usage.prompt_tokens = 500
+        mock_resp.usage.completion_tokens = 200
+        mock_resp.choices = [
+            MagicMock(
+                message=MagicMock(
+                    content='{"findings": [{"category": "unilateral_change", "severity": "red", "title": "Change", "explanation": "unilateral modification", "clause_id": "C-1", "quote": "We may update terms."}]}'
+                )
+            )
+        ]
+        return mock_resp
+
+    monkeypatch.setattr("litellm.completion", mock_completion)
+    # Even if litellm.completion_cost returns a non-zero value, ollama models must be 0.0
+    monkeypatch.setattr("litellm.completion_cost", lambda **kwargs: 0.05)
+
+    doc = DocumentRecord(id="doc_ollama_cost", source_type="text", raw_text="We may update terms.")
+    save_document(doc)
+    clauses = [ClauseRecord(id="C-1", document_id="doc_ollama_cost", ordinal=1, text="We may update terms.", page=1)]
+    save_clauses(clauses)
+
+    run, findings = analyze_document(doc, clauses, dry_run=False, model="ollama/qwen2.5:3b-instruct")
+    assert run.cost_usd == 0.0
+    assert run.tokens_in == 500
+    assert run.tokens_out == 200
+    assert run.model == "ollama/qwen2.5:3b-instruct"
+    assert run.latency_ms > 0
+
+
+def test_unreachable_ollama_raises_clear_error(monkeypatch):
+    """Verify graceful failure: when Ollama daemon is unreachable, raises clear error message.
+
+    'Ollama not reachable at ... — run ollama serve and ensure ... is pulled'
+    """
+    import litellm.exceptions as ex
+    import pytest
+
+    def mock_unreachable(*args, **kwargs):
+        raise ex.APIConnectionError(
+            message="OllamaException - [WinError 10061] No connection could be made because the target machine actively refused it",
+            model="ollama/qwen2.5:3b-instruct",
+            llm_provider="ollama",
+        )
+
+    monkeypatch.setattr("litellm.completion", mock_unreachable)
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+
+    doc = DocumentRecord(id="doc_unreachable", source_type="text", raw_text="Sample terms.")
+    save_document(doc)
+    clauses = [ClauseRecord(id="C-1", document_id="doc_unreachable", ordinal=1, text="Sample terms.", page=1)]
+    save_clauses(clauses)
+
+    expected_msg = "Ollama not reachable at http://localhost:11434 — run ollama serve and ensure qwen2.5:3b-instruct is pulled"
+    with pytest.raises(RuntimeError) as exc_info:
+        analyze_document(doc, clauses, dry_run=False, model="ollama/qwen2.5:3b-instruct")
+
+    assert expected_msg in str(exc_info.value)
+
+    # Also test with custom OLLAMA_BASE_URL
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://custom-host:11434")
+    expected_custom = "Ollama not reachable at http://custom-host:11434 — run ollama serve and ensure qwen2.5:3b-instruct is pulled"
+    with pytest.raises(RuntimeError) as exc_info_custom:
+        analyze_document(doc, clauses, dry_run=False, model="ollama/qwen2.5:3b-instruct")
+
+    assert expected_custom in str(exc_info_custom.value)
+
+
+def test_dry_run_works_with_no_network_and_no_ollama(monkeypatch):
+    """Verify that --dry-run continues to work offline with zero network and no Ollama running."""
+    def forbid_network(*args, **kwargs):
+        raise AssertionError("Network / litellm.completion must never be called during dry-run!")
+
+    monkeypatch.setattr("litellm.completion", forbid_network)
+
+    pdf_path = FIXTURES_DIR / "cloud_service_tos.pdf"
+    doc_data = extract_spans_from_pdf(pdf_path)
+    doc = save_document(DocumentRecord(**doc_data))
+    clauses = split_document_into_clauses(doc_data["spans"], doc_data["raw_text"], doc.id)
+    save_clauses(clauses)
+
+    run, findings = analyze_document(doc, clauses, dry_run=True)
+    assert run.model == "dry-run-stub"
+    assert run.cost_usd == 0.0
+    assert run.proposed_count > 0
+    assert len(findings) > 0
 
 
 

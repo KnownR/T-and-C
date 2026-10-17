@@ -1,6 +1,7 @@
 """CLI entrypoint for running legal analysis from terminal."""
 
 import argparse
+import os
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -9,7 +10,7 @@ ROOT_DIR = Path(__file__).resolve().parents[3]
 load_dotenv(ROOT_DIR / ".env")
 load_dotenv()
 
-from backend.app.analyze.analyzer import analyze_document
+from backend.app.analyze.analyzer import DEFAULT_ANALYSIS_MODEL, analyze_document
 from backend.app.db import DocumentRecord, init_db, save_clauses, save_document
 from backend.app.ingest.pdf import extract_spans_from_pdf
 from backend.app.ingest.text import extract_spans_from_text
@@ -22,7 +23,16 @@ def main() -> None:
     parser.add_argument("--file", "-f", required=True, help="Path to PDF or text file to analyze.")
     parser.add_argument("--dry-run", action="store_true", help="Run with offline stubbed model at zero API cost.")
     parser.add_argument("--lens", default="tos", help="Lens configuration to use (default: tos).")
-    parser.add_argument("--model", default=None, help="LiteLLM model identifier.")
+    default_model = (
+        os.environ.get("ANALYZE_MODEL")
+        or os.environ.get("ANALYSIS_MODEL")
+        or DEFAULT_ANALYSIS_MODEL
+    )
+    parser.add_argument(
+        "--model",
+        default=default_model,
+        help=f"LiteLLM model identifier (default: env ANALYZE_MODEL or {DEFAULT_ANALYSIS_MODEL}).",
+    )
     args = parser.parse_args()
 
     init_db()

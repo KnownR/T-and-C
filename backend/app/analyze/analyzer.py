@@ -44,7 +44,32 @@ from backend.app.db import (
 from backend.app.verify import verify_findings
 
 # Single configuration location for default analysis model
-DEFAULT_ANALYSIS_MODEL = "gemini/gemini-3.8-flash"
+DEFAULT_ANALYSIS_MODEL = "ollama/qwen2.5:3b-instruct"
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+
+
+def is_ollama_model(model: str) -> bool:
+    """Check if model string targets local Ollama."""
+    return model.startswith("ollama/") or model.startswith("ollama")
+
+
+def is_ollama_connection_error(exc: Exception) -> bool:
+    """Check if exception represents an unreachable or connection refused Ollama server."""
+    if isinstance(exc, litellm.exceptions.APIConnectionError):
+        return True
+    exc_str = str(exc).lower()
+    keywords = [
+        "actively refused",
+        "connection refused",
+        "failed to connect",
+        "connecterror",
+        "ollama not reachable",
+        "ollamaexception",
+        "winerror 10061",
+        "errno 111",
+        "connection error",
+    ]
+    return any(kw in exc_str for kw in keywords)
 
 
 def is_transient_error(exc: Exception) -> bool:
@@ -110,6 +135,9 @@ def completion_with_backoff(
     model: str,
     messages: list[dict[str, str]],
     response_format: Optional[dict[str, Any]] = None,
+    temperature: Optional[float] = 0.0,
+    max_tokens: Optional[int] = 4096,
+    api_base: Optional[str] = None,
     max_transient_retries: Optional[int] = None,
     base_delay: Optional[float] = None,
     max_delay: Optional[float] = None,
@@ -118,7 +146,8 @@ def completion_with_backoff(
     """Execute litellm.completion with bounded exponential backoff and jitter for transient errors.
 
     Prevents nested retries by disabling internal LiteLLM retries (num_retries=0).
-    Fails immediately without retries for permanent errors (401, 403, 404, 400).
+    Fails immediately without retries for permanent errors (401, 403, 404, 400)
+    and provides clear graceful errors if local Ollama is unreachable.
     """
     if max_transient_retries is None:
         max_transient_retries = int(os.environ.get("ANALYSIS_MAX_TRANSIENT_RETRIES", "4"))
@@ -131,6 +160,10 @@ def completion_with_backoff(
 
     total_attempts = 1 + max(0, max_transient_retries)
 
+    effective_api_base = api_base
+    if effective_api_base is None and is_ollama_model(model):
+        effective_api_base = os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
+
     for attempt in range(1, total_attempts + 1):
         try:
             kwargs: dict[str, Any] = {
@@ -140,10 +173,26 @@ def completion_with_backoff(
             }
             if response_format is not None:
                 kwargs["response_format"] = response_format
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
+            if effective_api_base is not None:
+                kwargs["api_base"] = effective_api_base
 
             return litellm.completion(**kwargs)
 
         except Exception as exc:
+            if is_ollama_model(model) and is_ollama_connection_error(exc):
+                ollama_url = (
+                    effective_api_base
+                    or os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
+                )
+                model_tag = model.split("/", 1)[1] if "/" in model else model
+                raise RuntimeError(
+                    f"Ollama not reachable at {ollama_url} — run ollama serve and ensure {model_tag} is pulled"
+                ) from exc
+
             if not is_transient_error(exc):
                 status_val = getattr(exc, "status_code", "permanent")
                 print(
@@ -315,6 +364,9 @@ def analyze_document(
     db_path: Optional[str] = None,
     max_transient_retries: Optional[int] = None,
     sleep_fn: Optional[Callable[[float], None]] = None,
+    temperature: Optional[float] = 0.0,
+    max_tokens: Optional[int] = 4096,
+    api_base: Optional[str] = None,
 ) -> tuple[AnalysisRunRecord, list[FindingRecord]]:
     """Perform structured legal analysis on a document's clauses.
 
@@ -324,10 +376,13 @@ def analyze_document(
         lens_id: The lens configuration file identifier (default 'tos').
         dry_run: If True, uses stubbed offline analysis without network API calls.
         max_retries: Number of retries on schema validation failure (default 1).
-        model: Model name for LiteLLM completion (env ANALYSIS_MODEL if None).
+        model: Model name for LiteLLM completion (env ANALYZE_MODEL or ANALYSIS_MODEL if None).
         db_path: Optional SQLite DB path.
         max_transient_retries: Number of retries on transient errors (HTTP 503, 429, etc.).
         sleep_fn: Optional sleep function for backoff delays (default time.sleep).
+        temperature: Temperature for deterministic quoting (default 0.0).
+        max_tokens: Token generation limit (default 4096).
+        api_base: Optional base URL for Ollama or custom endpoint.
 
     Returns:
         tuple[AnalysisRunRecord, list[FindingRecord]]
@@ -383,7 +438,17 @@ def analyze_document(
 
 
     # Non-dry-run mode: invoke LiteLLM with transient retry wrapper
-    model_name = model or os.environ.get("ANALYSIS_MODEL", DEFAULT_ANALYSIS_MODEL)
+    model_name = (
+        model
+        or os.environ.get("ANALYZE_MODEL")
+        or os.environ.get("ANALYSIS_MODEL")
+        or DEFAULT_ANALYSIS_MODEL
+    )
+    is_ollama = is_ollama_model(model_name)
+    effective_api_base = api_base or (
+        os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL) if is_ollama else None
+    )
+
     system_prompt, user_prompt = build_analysis_prompt(lens_data, clauses)
 
     messages = [
@@ -404,6 +469,9 @@ def analyze_document(
             model=model_name,
             messages=messages,
             response_format={"type": "json_object"},
+            temperature=temperature,
+            max_tokens=max_tokens,
+            api_base=effective_api_base,
             max_transient_retries=max_transient_retries,
             sleep_fn=sleep_fn,
         )
@@ -412,19 +480,28 @@ def analyze_document(
             total_tokens_in += getattr(resp.usage, "prompt_tokens", 0) or 0
             total_tokens_out += getattr(resp.usage, "completion_tokens", 0) or 0
 
-        try:
-            cost = litellm.completion_cost(completion_response=resp)
-            if cost is not None:
-                total_cost += float(cost)
-        except Exception:
-            pass
+        if is_ollama:
+            total_cost = 0.0
+        else:
+            try:
+                cost = litellm.completion_cost(completion_response=resp)
+                if cost is not None:
+                    total_cost += float(cost)
+            except Exception:
+                pass
 
         raw_content = ""
         if hasattr(resp, "choices") and resp.choices:
             raw_content = resp.choices[0].message.content or ""
 
+        # Clean potential markdown code blocks
+        clean_content = raw_content.strip()
+        if clean_content.startswith("```"):
+            clean_content = re.sub(r"^```(?:json)?\s*", "", clean_content, flags=re.IGNORECASE)
+            clean_content = re.sub(r"\s*```$", "", clean_content)
+
         try:
-            parsed_output = AnalysisOutput.model_validate_json(raw_content)
+            parsed_output = AnalysisOutput.model_validate_json(clean_content)
             # Schema validation succeeded
             break
         except (ValidationError, json.JSONDecodeError) as err:
@@ -447,6 +524,7 @@ def analyze_document(
                 break
 
     latency_ms = max(1.0, (time.perf_counter() - t0) * 1000)
+    run_cost = 0.0 if is_ollama else total_cost
 
     # If parsing completely failed after retries, record failure in analysis_runs and move on
     if parsed_output is None:
@@ -458,7 +536,7 @@ def analyze_document(
             total_clauses=len(clauses),
             tokens_in=total_tokens_in,
             tokens_out=total_tokens_out,
-            cost_usd=total_cost,
+            cost_usd=run_cost,
             latency_ms=latency_ms,
             proposed_count=0,
             verified_count=0,
@@ -492,7 +570,7 @@ def analyze_document(
         total_clauses=len(clauses),
         tokens_in=total_tokens_in,
         tokens_out=total_tokens_out,
-        cost_usd=total_cost,
+        cost_usd=run_cost,
         latency_ms=latency_ms,
         proposed_count=len(deduped),
         verified_count=verified_count,

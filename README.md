@@ -19,8 +19,9 @@ No finding is ever displayed in the UI without a verified quote matching the ori
 | **Phase 2** | Segmentation (Rule-based clause splitter with stable IDs & bounding boxes) | ✅ Complete |
 | **Phase 3** | Analysis with structured output (8 UNFAIR-ToS categories, prompt from YAML, LiteLLM + dry-run) | ✅ Complete |
 | **Phase 4** | Citation verifier (Exact $\rightarrow$ fuzzy $\rightarrow$ re-anchor $\rightarrow$ reject, grounding rate metrics) | ✅ Complete |
-| **Phase 5** | Minimal polished UI (Findings list + PDF viewer with highlight) | ⏳ Next |
-| **Phase 6** | Evals & Benchmarks (UNFAIR-ToS eval runner & golden set) | ⏳ Pending |
+| **Phase 5** | Local LLM via Ollama (`ollama/qwen2.5:3b-instruct` via LiteLLM adapter, $0 cost telemetry) | ✅ Complete |
+| **Phase 6** | Minimal polished UI (Findings list + PDF viewer with highlight) | ⏳ Next |
+| **Phase 7** | Evals & Benchmarks (UNFAIR-ToS eval runner & golden set) | ⏳ Pending |
 
 ## Evaluation Results
 
@@ -79,6 +80,59 @@ curl -X POST -H "Content-Type: application/json" \
   http://localhost:8000/api/documents
 ```
 
+### Local Model Setup (Ollama)
+Run real legal analysis locally on your machine with zero cloud API keys, complete privacy, and $0 API cost using Ollama and `qwen2.5:3b-instruct`:
+
+1. **Pull the Model & Start Ollama:**
+   ```bash
+   ollama pull qwen2.5:3b-instruct
+   ollama serve
+   ```
+   *By default, Ollama serves on `http://localhost:11434`.*
+
+2. **Environment Configuration (Optional):**
+   - `OLLAMA_BASE_URL`: Base URL for Ollama daemon (defaults to `http://localhost:11434`).
+   - `ANALYZE_MODEL`: Default model string (defaults to `ollama/qwen2.5:3b-instruct`).
+
+3. **Run Real Analysis via CLI:**
+   ```bash
+   python -m backend.app.analyze --file backend/tests/fixtures/cloud_service_tos.pdf
+   ```
+   You can override the model on the fly using `--model`:
+   ```bash
+   python -m backend.app.analyze --file backend/tests/fixtures/cloud_service_tos.pdf --model ollama/qwen2.5:3b-instruct
+   ```
+
+4. **Graceful Failure & Offline Mode:**
+   - If Ollama is not running or unreachable, the CLI clearly fails fast with:
+     `[Error] Analysis failed: Ollama not reachable at http://localhost:11434 — run ollama serve and ensure qwen2.5:3b-instruct is pulled`
+   - Use `--dry-run` to run fully offline with zero network calls and no Ollama daemon required:
+     ```bash
+     python -m backend.app.analyze --file backend/tests/fixtures/cloud_service_tos.pdf --dry-run
+     ```
+
+### Real Observed Numbers: Local Model on `cloud_service_tos.pdf` (Phase 5)
+Real measured telemetry from executing `python -m backend.app.analyze --file backend/tests/fixtures/cloud_service_tos.pdf` against local `ollama/qwen2.5:3b-instruct`:
+
+| Metric | Measured Value |
+|---|---|
+| **Model** | `ollama/qwen2.5:3b-instruct` |
+| **Total Clauses** | 6 |
+| **Proposed Findings** | 1 |
+| **Verified Findings** | 1 |
+| **Rejected Findings** | 0 |
+| **Grounding Rate** | **100.0%** |
+| **Tokens In / Out** | 3,261 / 4,207 |
+| **API Cost** | **$0.0000** |
+| **Latency** | **75,761.3 ms (~75.8 s)** |
+
+**Verified Finding Details:**
+- **[RED] [VERIFIED] Unilateral Termination (`unilateral_termination`) - Clause C-6**
+  - **Match Score:** 100.0%
+  - **Quote:** `"CloudScale may suspend or terminate your access to the Services immediately, with or without cause, and without prior notice or liability."`
+  - **Explanation:** The provider can suspend or terminate the user's account or access immediately and at its sole discretion without notice or cause.
+
+
 ### Analysis CLI (Dry-Run Mode)
 Analyze any Terms of Service document offline at zero cost using deterministic rubric pattern matching:
 ```bash
@@ -109,6 +163,13 @@ curl -X GET "http://localhost:8000/api/documents/{doc_id}/findings"
 9. **Known Layout Limitations:**
    - **Multi-column layouts & tables:** Multi-column text flow is currently ingested sequentially in top-to-bottom reading order. Complex magazine-style multi-column text flows and nested HTML/PDF tables are treated as sequential paragraphs rather than performing full geometric 2D column de-warping.
 10. **Database Schema:** SQLite stores `documents`, `clauses`, `findings`, and `analysis_runs` with foreign key enforcement enabled (`PRAGMA foreign_keys = ON`).
+11. **Local LLM via Ollama & LiteLLM Seam (Phase 5):**
+    - Analysis pipeline defaults to `ollama/qwen2.5:3b-instruct` communicating over LiteLLM to local Ollama (`http://localhost:11434`, overridable via `OLLAMA_BASE_URL`).
+    - Model selection is dynamically configurable via `--model` CLI flag or `ANALYZE_MODEL` environment variable.
+    - Zero cost ($0.0000) telemetry automatically enforced for all `ollama/*` models.
+    - Deterministic parameters: `temperature=0.0` and a bounded `max_tokens=4096` ceiling.
+    - Graceful failure: if the local Ollama daemon is down, an explicit actionable error informs the user to run `ollama serve` and pull the model.
+    - Full offline independence: `--dry-run` retains 100% offline functionality without touching the network or requiring Ollama.
 
 
 
