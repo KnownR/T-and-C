@@ -31,3 +31,6 @@ dist/
 debug_logs/
 *.log
 
+# Archives
+wdia.zip
+

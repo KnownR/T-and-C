@@ -9,8 +9,8 @@
 No finding is ever displayed in the UI without a verified quote matching the original source text.
 
 ## North-Star Metrics
-- **Grounding Rate:** **100.0%** (7B) / **96.2%** (3B) on UNFAIR-ToS benchmark ($N=500$) and **100.0%** on Golden Set; target $\ge 0.85$.
-- **UNFAIR-ToS Benchmark F1:** **49.2% Macro F1 / 39.2% Micro F1** (`ollama/qwen2.5:7b-instruct`, $N=500$); **27.6% Macro F1 / 12.5% Micro F1** (`ollama/qwen2.5:3b-instruct`, $N=500$).
+- **Grounding Rate:** **100.0%** (7B) / **96.3%** (3B) on full UNFAIR-ToS benchmark ($N=1,607$) and **100.0%** on Golden Set; target $\ge 0.85$.
+- **UNFAIR-ToS Benchmark F1:** **43.2% Macro F1 / 41.3% Micro F1** (`ollama/qwen2.5:7b-instruct`, $N=1,607$); **30.0% Macro F1 / 14.8% Micro F1** (`ollama/qwen2.5:3b-instruct`, $N=1,607$).
 - **Golden Set Red Flag Recall & False Positives:**
   - `qwen2.5:7b-instruct`: **85.7% Recall** (12/14 known red flags), **1 False Positive** on clean controls (Macro F1: 89.2%, Micro F1: 88.9%).
   - `qwen2.5:3b-instruct`: **78.6% Recall** (11/14 known red flags), **3 False Positives** on clean controls (Macro F1: 81.7%, Micro F1: 78.6%).
@@ -30,50 +30,49 @@ No finding is ever displayed in the UI without a verified quote matching the ori
 
 ## Evaluation Results
 
-### 1. UNFAIR-ToS Benchmark Evaluation (LexGLUE `unfair_tos`, $N=500$ Dual-Model Comparison)
+### 1. UNFAIR-ToS Benchmark Evaluation (LexGLUE `unfair_tos`, Full Split $N=1,607$ Dual-Model Comparison)
 Evaluated sentence-by-sentence as single-clause documents through the complete ingest $\rightarrow$ prompt $\rightarrow$ LLM $\rightarrow$ citation verifier pipeline against local Ollama models on 4GB VRAM GPU hardware (NVIDIA GeForce RTX 3050 Laptop GPU).
-*(Note: Evaluated across $N=500$ test split sentences with per-sample persistence and SQLite caching in `eval_runs`).*
+*(Note: Evaluated across the complete $N=1,607$ test split sentences with per-sample persistence and SQLite caching in `eval_runs`).*
 
 ```bash
 # Reproduce with:
-python -m backend.evals.run_eval --dataset unfair_tos --limit 500 --model ollama/qwen2.5:3b-instruct
-python -m backend.evals.run_eval --dataset unfair_tos --limit 500 --model ollama/qwen2.5:7b-instruct
+python -m backend.evals.run_eval --dataset unfair_tos --model ollama/qwen2.5:3b-instruct
+python -m backend.evals.run_eval --dataset unfair_tos --model ollama/qwen2.5:7b-instruct
 ```
 
 | Category | Support | 3B Precision | 3B Recall | 3B F1 | 7B Precision | 7B Recall | 7B F1 |
 |---|---|---|---|---|---|---|---|
-| **Mandatory Arbitration** | 3 | 5.9% | 100.0% | 11.1% | 7.9% | 100.0% | **14.6%** |
-| **Unilateral Change** | 6 | 11.4% | 83.3% | 20.0% | 23.8% | 83.3% | **37.0%** |
-| **Content Removal** | 5 | 100.0% | 60.0% | **75.0%** | 44.4% | 80.0% | 57.1% |
-| **Jurisdiction Selection** | 1 | 0.0% | 0.0% | 0.0% | 50.0% | 100.0% | **66.7%** |
-| **Choice of Law** | 3 | 40.0% | 66.7% | 50.0% | 100.0% | 66.7% | **80.0%** |
-| **Limitation of Liability** | 4 | 7.8% | 100.0% | 14.5% | 22.2% | 100.0% | **36.4%** |
-| **Unilateral Termination** | 13 | 3.8% | 84.6% | 7.2% | 61.5% | 61.5% | **61.5%** |
-| **Contract Formed by Usage** | 6 | 37.5% | 50.0% | **42.9%** | 33.3% | 50.0% | 40.0% |
-| **Micro Average** | 41 | 6.8% | 75.6% | **12.5%** | 26.8% | 73.2% | **39.2%** |
-| **Macro Average** | 41 | 25.8% | 68.1% | **27.6%** | 42.9% | 80.2% | **49.2%** |
+| **Mandatory Arbitration** | 7 | 4.3% | 100.0% | 8.2% | 5.4% | 100.0% | **10.2%** |
+| **Unilateral Change** | 38 | 27.9% | 81.6% | 41.6% | 37.1% | 86.8% | **52.0%** |
+| **Content Removal** | 13 | 62.5% | 38.5% | **47.6%** | 27.8% | 76.9% | 40.8% |
+| **Jurisdiction Selection** | 16 | 34.5% | 62.5% | 44.4% | 47.1% | 100.0% | **64.0%** |
+| **Choice of Law** | 13 | 50.0% | 38.5% | **43.5%** | 57.1% | 30.8% | 40.0% |
+| **Limitation of Liability** | 38 | 14.0% | 71.1% | 23.4% | 35.8% | 76.3% | **48.7%** |
+| **Unilateral Termination** | 38 | 3.4% | 81.6% | 6.5% | 49.0% | 63.2% | **55.2%** |
+| **Contract Formed by Usage** | 23 | 27.8% | 21.7% | 24.4% | 41.2% | 30.4% | **35.0%** |
+| **Micro Average** | 186 | 8.3% | 65.1% | 14.8% | 29.3% | 69.9% | **41.3%** |
+| **Macro Average** | 186 | 28.0% | 61.9% | 30.0% | 37.6% | 70.6% | **43.2%** |
 
-**Grounding & Operational Performance ($N=500$):**
+**Grounding & Operational Performance ($N=1,607$):**
 
 | Operational Metric | Qwen 2.5 3B (`ollama/qwen2.5:3b-instruct`) | Qwen 2.5 7B (`ollama/qwen2.5:7b-instruct`) [Default] |
 |---|---|---|
-| **Total Samples Evaluated** | 500 (41 Unfair ground truth, 459 Neutral) | 500 (41 Unfair ground truth, 459 Neutral) |
-| **Total Proposed Findings** | 472 | **112** *(~4.2x fewer proposals / false alarms)* |
-| **Verified Findings** | 454 | **112** |
-| **Rejected Findings** | 18 *(hallucinated quotes caught & rejected)* | **0** *(zero hallucinated quotes)* |
-| **Grounding Rate** | 96.2% (454 / 472) | **100.0%** (112 / 112) |
-| **Macro F1 / Micro F1** | 27.6% / 12.5% | **49.2% / 39.2%** |
-| **Average Latency** | **2,017.9 ms/sample** (~2.0s per sentence) | 3,681.1 ms/sample (~3.7s per sentence, ~1.8x latency) |
+| **Total Samples Evaluated** | 1,607 (172 positive / 186 unfair ground truth labels, 1,435 neutral) | 1,607 (172 positive / 186 unfair ground truth labels, 1,435 neutral) |
+| **Total Proposed Findings** | 1,506 *(~0.94 / ~1 proposal per sentence)* | **443** *(~3.4x fewer proposals / false alarms)* |
+| **Verified Findings** | 1,451 | **443** |
+| **Rejected Findings** | 55 *(hallucinated quotes caught & rejected)* | **0** *(zero hallucinated quotes)* |
+| **Grounding Rate** | 96.3% (1,451 / 1,506) | **100.0%** (443 / 443) |
+| **Macro F1 / Micro F1** | 30.0% / 14.8% | **43.2% / 41.3%** |
+| **Average Latency** | **2,192.6 ms/sample** (~2.2s per sentence) | 4,986.1 ms/sample (~5.0s per sentence, ~2.3x latency) |
 | **API Cost** | **$0.0000** | **$0.0000** |
 | **Resumability** | 100% cached in SQLite `eval_runs` | 100% cached in SQLite `eval_runs` |
 
-#### 3B vs 7B Measured Conclusion
-The 7B model dominates every quality metric: it achieves nearly double the Macro F1 (**49.2% vs 27.6%**) and over triple the Micro F1 (**39.2% vs 12.5%**), proposes **4x fewer false alarms** (112 total proposals vs 472, cutting unilateral termination false positives from 280 down to 5), and grounds citations perfectly (**100.0% grounding rate** with 0 rejected hallucinations vs 18 rejected on 3B). It accomplishes this at only ~1.8x latency (~3.7s vs ~2.0s per sentence). On measured merit, `ollama/qwen2.5:7b-instruct` definitively remains the default model.
-
-#### Framing the Benchmark Numbers
-Two essential architectural context points frame these evaluation results:
-- **(a) Why Golden-Set F1 (~89%) Exceeds UNFAIR-ToS F1 (~49%):** The UNFAIR-ToS benchmark evaluates isolated, single-sentence fragments extracted from contract text without surrounding context (headings, sub-clauses, introductory definitions, or recitals). In contrast, the Golden Set evaluates complete, coherent legal clauses as encountered in real-world ToS documents. Single decontextualized sentences introduce severe classification ambiguity for an LLM (e.g., standard boilerplate mentions of termination or arbitration without their operative conditions). Consequently, the benchmark is a pessimistic lower bound on real-world precision.
-- **(b) Recall-First Architectural Design:** In automated consumer contract protection, false alarms and false negatives carry profoundly asymmetric costs. A false alarm is safely anchored to a verified quote: the user skims the highlighted sentence, spends two seconds, and dismisses it. A missed red flag (false negative), however, costs an unwitting signature and the irreversible forfeiture of legal rights. The high recall across both models (73.2%–75.6% micro recall on UNFAIR-ToS; 85.7% on the Golden Set) is intentional by design.
+#### Benchmark Framing & Analysis
+Four architectural and empirical observations frame these full-split ($N=1,607$) results:
+(a) **Recall-first design rationale:** our architecture prioritizes recall because every finding carries a deterministically verified quote—a false alarm costs the user only a quick skim to dismiss, whereas a missed red flag costs an unwitting signature and irreversible forfeiture of legal rights;
+(b) **Sentence-level eval context stripping:** the UNFAIR-ToS benchmark evaluates isolated single sentences devoid of surrounding document context (clause headings, introductory definitions, recitals, and operative qualifiers), which naturally depresses precision compared to document-level evaluation on the Golden Set (where the 7B achieves 88.9% Micro F1 with only 1 false positive across all clean controls);
+(c) **Systemic weakness on `contract_by_using` confirmed:** both models exhibit their lowest category recall on browsewrap / agreement-by-usage clauses (21.7% on 3B, 30.4% on 7B), confirming across the full $N=1,607$ test split the systemic low-salience blindness originally identified under [Known Limitations](#known-limitation--honest-evaluation-browsewrap-blindness-contract_by_using); and
+(d) **Measured model conclusion:** the 3B model proposes 1,506 findings across 1,607 sentences (~1 finding per sentence, including 888 unilateral termination false alarms and 55 hallucinated quotes caught and rejected by the verifier) and is unsuitable as default, whereas `ollama/qwen2.5:7b-instruct` dominates every quality metric (43.2% vs 30.0% Macro F1, 41.3% vs 14.8% Micro F1, 100.0% grounding rate with zero rejections) at ~2.3x latency (4,986ms vs 2,193ms) and definitively remains the default model.
 
 ### 2. Golden Set Evaluation (14 Real ToS Documents / Clean Controls)
 14 real-world, hand-labelled Terms of Service clauses under [`backend/evals/datasets/golden/`](backend/evals/datasets/golden/), covering all 8 rubric categories (11 unfair documents, 14 total known red flags) plus 3 balanced clean control documents to measure false positives.
