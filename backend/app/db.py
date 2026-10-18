@@ -85,7 +85,45 @@ CREATE TABLE IF NOT EXISTS findings (
     FOREIGN KEY (analysis_run_id) REFERENCES analysis_runs (id) ON DELETE CASCADE,
     FOREIGN KEY (clause_id) REFERENCES clauses (id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS eval_runs (
+    id TEXT PRIMARY KEY,
+    dataset TEXT NOT NULL,
+    split TEXT NOT NULL DEFAULT 'test',
+    model TEXT NOT NULL,
+    lens_id TEXT NOT NULL DEFAULT 'tos',
+    lens_version INTEGER NOT NULL DEFAULT 1,
+    sample_id INTEGER NOT NULL,
+    sentence TEXT NOT NULL,
+    ground_truth TEXT NOT NULL,
+    predicted TEXT NOT NULL,
+    findings_json TEXT NOT NULL DEFAULT '[]',
+    verified_count INTEGER NOT NULL DEFAULT 0,
+    rejected_count INTEGER NOT NULL DEFAULT 0,
+    grounding_rate REAL NOT NULL DEFAULT 1.0,
+    tokens_in INTEGER NOT NULL DEFAULT 0,
+    tokens_out INTEGER NOT NULL DEFAULT 0,
+    latency_ms REAL NOT NULL DEFAULT 0.0,
+    created_at TEXT NOT NULL,
+    UNIQUE(dataset, split, model, lens_id, lens_version, sample_id)
+);
+
+CREATE TABLE IF NOT EXISTS eval_summaries (
+    id TEXT PRIMARY KEY,
+    dataset TEXT NOT NULL,
+    split TEXT NOT NULL DEFAULT 'test',
+    model TEXT NOT NULL,
+    lens_id TEXT NOT NULL DEFAULT 'tos',
+    lens_version INTEGER NOT NULL DEFAULT 1,
+    limit_n INTEGER NOT NULL DEFAULT 0,
+    sample_count INTEGER NOT NULL,
+    macro_f1 REAL NOT NULL DEFAULT 0.0,
+    micro_f1 REAL NOT NULL DEFAULT 0.0,
+    metrics_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
+
 
 
 def init_db(db_path: Optional[str] = None) -> None:
@@ -472,6 +510,266 @@ def get_findings(
             )
             for row in rows
         ]
+    finally:
+        conn.close()
+
+
+class EvalRunRecord(BaseModel):
+    id: str
+    dataset: str
+    split: str = "test"
+    model: str
+    lens_id: str = "tos"
+    lens_version: int = 1
+    sample_id: int
+    sentence: str
+    ground_truth: str  # JSON list of category IDs e.g. '["arbitration"]'
+    predicted: str  # JSON list of verified category IDs e.g. '["arbitration"]'
+    findings_json: str = "[]"
+    verified_count: int = 0
+    rejected_count: int = 0
+    grounding_rate: float = 1.0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    latency_ms: float = 0.0
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+def save_eval_run(
+    record: EvalRunRecord, db_path: Optional[str] = None
+) -> EvalRunRecord:
+    """Insert or replace an evaluation sample run record."""
+    conn = get_db_connection(db_path)
+    try:
+        with conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO eval_runs (
+                    id, dataset, split, model, lens_id, lens_version,
+                    sample_id, sentence, ground_truth, predicted,
+                    findings_json, verified_count, rejected_count,
+                    grounding_rate, tokens_in, tokens_out, latency_ms, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.id,
+                    record.dataset,
+                    record.split,
+                    record.model,
+                    record.lens_id,
+                    record.lens_version,
+                    record.sample_id,
+                    record.sentence,
+                    record.ground_truth,
+                    record.predicted,
+                    record.findings_json,
+                    record.verified_count,
+                    record.rejected_count,
+                    record.grounding_rate,
+                    record.tokens_in,
+                    record.tokens_out,
+                    record.latency_ms,
+                    record.created_at,
+                ),
+            )
+        return record
+    finally:
+        conn.close()
+
+
+def get_cached_eval_run(
+    dataset: str,
+    split: str,
+    model: str,
+    lens_id: str,
+    lens_version: int,
+    sample_id: int,
+    db_path: Optional[str] = None,
+) -> Optional[EvalRunRecord]:
+    """Retrieve an evaluation run for a sample if already executed with identical parameters."""
+    conn = get_db_connection(db_path)
+    try:
+        cur = conn.execute(
+            """
+            SELECT id, dataset, split, model, lens_id, lens_version,
+                   sample_id, sentence, ground_truth, predicted,
+                   findings_json, verified_count, rejected_count,
+                   grounding_rate, tokens_in, tokens_out, latency_ms, created_at
+            FROM eval_runs
+            WHERE dataset = ? AND split = ? AND model = ? AND lens_id = ? AND lens_version = ? AND sample_id = ?
+            """,
+            (dataset, split, model, lens_id, lens_version, sample_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return EvalRunRecord(
+            id=row["id"],
+            dataset=row["dataset"],
+            split=row["split"],
+            model=row["model"],
+            lens_id=row["lens_id"],
+            lens_version=row["lens_version"],
+            sample_id=row["sample_id"],
+            sentence=row["sentence"],
+            ground_truth=row["ground_truth"],
+            predicted=row["predicted"],
+            findings_json=row["findings_json"],
+            verified_count=row["verified_count"],
+            rejected_count=row["rejected_count"],
+            grounding_rate=row["grounding_rate"],
+            tokens_in=row["tokens_in"],
+            tokens_out=row["tokens_out"],
+            latency_ms=row["latency_ms"],
+            created_at=row["created_at"],
+        )
+    finally:
+        conn.close()
+
+
+def get_eval_runs(
+    dataset: str,
+    split: str,
+    model: str,
+    lens_id: str,
+    lens_version: int,
+    db_path: Optional[str] = None,
+) -> list[EvalRunRecord]:
+    """Retrieve all evaluation sample runs for a dataset/split/model/lens combination."""
+    conn = get_db_connection(db_path)
+    try:
+        cur = conn.execute(
+            """
+            SELECT id, dataset, split, model, lens_id, lens_version,
+                   sample_id, sentence, ground_truth, predicted,
+                   findings_json, verified_count, rejected_count,
+                   grounding_rate, tokens_in, tokens_out, latency_ms, created_at
+            FROM eval_runs
+            WHERE dataset = ? AND split = ? AND model = ? AND lens_id = ? AND lens_version = ?
+            ORDER BY sample_id ASC
+            """,
+            (dataset, split, model, lens_id, lens_version),
+        )
+        rows = cur.fetchall()
+        return [
+            EvalRunRecord(
+                id=row["id"],
+                dataset=row["dataset"],
+                split=row["split"],
+                model=row["model"],
+                lens_id=row["lens_id"],
+                lens_version=row["lens_version"],
+                sample_id=row["sample_id"],
+                sentence=row["sentence"],
+                ground_truth=row["ground_truth"],
+                predicted=row["predicted"],
+                findings_json=row["findings_json"],
+                verified_count=row["verified_count"],
+                rejected_count=row["rejected_count"],
+                grounding_rate=row["grounding_rate"],
+                tokens_in=row["tokens_in"],
+                tokens_out=row["tokens_out"],
+                latency_ms=row["latency_ms"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
+
+class EvalSummaryRecord(BaseModel):
+    id: str
+    dataset: str
+    split: str = "test"
+    model: str
+    lens_id: str = "tos"
+    lens_version: int = 1
+    limit_n: int = 0
+    sample_count: int
+    macro_f1: float = 0.0
+    micro_f1: float = 0.0
+    metrics_json: str
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+def save_eval_summary(
+    record: EvalSummaryRecord, db_path: Optional[str] = None
+) -> EvalSummaryRecord:
+    """Insert or replace an evaluation summary record."""
+    conn = get_db_connection(db_path)
+    try:
+        with conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO eval_summaries (
+                    id, dataset, split, model, lens_id, lens_version,
+                    limit_n, sample_count, macro_f1, micro_f1, metrics_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.id,
+                    record.dataset,
+                    record.split,
+                    record.model,
+                    record.lens_id,
+                    record.lens_version,
+                    record.limit_n,
+                    record.sample_count,
+                    record.macro_f1,
+                    record.micro_f1,
+                    record.metrics_json,
+                    record.created_at,
+                ),
+            )
+        return record
+    finally:
+        conn.close()
+
+
+def get_latest_eval_summary(
+    dataset: str,
+    split: str,
+    model: str,
+    lens_id: str = "tos",
+    lens_version: int = 1,
+    db_path: Optional[str] = None,
+) -> Optional[EvalSummaryRecord]:
+    """Retrieve the most recent evaluation summary for a dataset/model combination."""
+    conn = get_db_connection(db_path)
+    try:
+        cur = conn.execute(
+            """
+            SELECT id, dataset, split, model, lens_id, lens_version,
+                   limit_n, sample_count, macro_f1, micro_f1, metrics_json, created_at
+            FROM eval_summaries
+            WHERE dataset = ? AND split = ? AND model = ? AND lens_id = ? AND lens_version = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (dataset, split, model, lens_id, lens_version),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return EvalSummaryRecord(
+            id=row["id"],
+            dataset=row["dataset"],
+            split=row["split"],
+            model=row["model"],
+            lens_id=row["lens_id"],
+            lens_version=row["lens_version"],
+            limit_n=row["limit_n"],
+            sample_count=row["sample_count"],
+            macro_f1=row["macro_f1"],
+            micro_f1=row["micro_f1"],
+            metrics_json=row["metrics_json"],
+            created_at=row["created_at"],
+        )
     finally:
         conn.close()
 

@@ -1,0 +1,100 @@
+[
+  {
+    "id": 1,
+    "name": "Mandatory Arbitration & Class Action Waiver",
+    "categories": ["arbitration"],
+    "text": "Any dispute, claim, or controversy arising out of or relating to this Agreement or the breach, termination, enforcement, interpretation, or validity thereof shall be resolved solely and exclusively by final and binding individual arbitration administered by the American Arbitration Association under its Consumer Arbitration Rules. You expressly waive any right to initiate, join, or participate in any class action, collective lawsuit, or representative proceeding against the Company.",
+    "notes": "Classic AAA consumer arbitration clause with express class action waiver."
+  },
+  {
+    "id": 2,
+    "name": "Unilateral Modification of Terms",
+    "categories": ["unilateral_change"],
+    "text": "The Company reserves the right, at its sole and absolute discretion, to alter, amend, replace, or update these Terms of Service or any feature, fee, or functionality of the Service at any time without prior written notice to you. Your continued access to or use of the Service following the posting of any revised Terms constitutes your irrevocable acceptance of such changes.",
+    "notes": "Unilateral change without advance notice."
+  },
+  {
+    "id": 3,
+    "name": "Discretionary Content Removal",
+    "categories": ["content_removal"],
+    "text": "We reserve the right, though we undertake no duty or obligation, to review, screen, monitor, edit, refuse to post, or permanently remove any user-submitted content, post, or communication from our platform at any time, for any reason or no reason, in our sole discretion and without notice or financial liability to you.",
+    "notes": "Unfettered discretion to censor or purge content without recourse."
+  },
+  {
+    "id": 4,
+    "name": "Exclusive Foreign Jurisdiction",
+    "categories": ["jurisdiction"],
+    "text": "You irrevocably agree that any legal action, suit, or judicial proceeding arising out of or related to these Terms or your use of the Platform must be instituted exclusively in the state or federal courts located in the City of Wilmington, New Castle County, State of Delaware, and you irrevocably submit to the exclusive personal jurisdiction and venue of such courts.",
+    "notes": "Exclusive forum selection forcing users into a distant court."
+  },
+  {
+    "id": 5,
+    "name": "Governing Law Selection",
+    "categories": ["choice_of_law"],
+    "text": "These Terms and all claims or causes of action arising hereunder shall be governed by, and construed and enforced exclusively in accordance with, the internal substantive laws of the State of California, United States of America, without regard to its principles or rules regarding conflicts of laws.",
+    "notes": "Explicit governing law choice clause."
+  },
+  {
+    "id": 6,
+    "name": "Severe Limitation of Liability",
+    "categories": ["limitation_of_liability"],
+    "text": "To the maximum extent permitted by applicable law, in no event shall the Service Provider, its directors, employees, or licensors be liable for any indirect, punitive, special, exemplary, incidental, or consequential damages whatsoever. The Provider's aggregate total cumulative liability arising out of or related to this Agreement shall under all circumstances be strictly capped at the lesser of fifty dollars ($50.00 USD) or the total fees paid by you in the preceding three (3) months.",
+    "notes": "Disclaims all consequential damages and sets a microscopic liability ceiling."
+  },
+  {
+    "id": 7,
+    "name": "Immediate Unilateral Account Termination",
+    "categories": ["unilateral_termination"],
+    "text": "The Company may terminate, suspend, restrict, or deactivate your user account, login credentials, or access to any part of the Service immediately and without prior notice, explanation, or cause, at the Company's sole discretion, effectively forfeiting any remaining subscription balances or saved data.",
+    "notes": "Summary account termination without notice or cause."
+  },
+  {
+    "id": 8,
+    "name": "Contract Formed by Mere Website Browsing",
+    "categories": ["contract_by_using"],
+    "text": "By accessing, viewing, loading, browsing, caching, or otherwise using any web page, asset, or content available on this website, you indicate and acknowledge that you have read, understood, and agreed to be legally bound by each and every provision of these Terms of Service, regardless of whether you have registered for an account or made a purchase.",
+    "notes": "Browsewrap clause binding user merely by visiting."
+  },
+  {
+    "id": 9,
+    "name": "Multi-flag: Arbitration & Jurisdiction",
+    "categories": ["arbitration", "jurisdiction"],
+    "text": "All controversies and claims between the parties shall be settled by confidential binding arbitration conducted in Santa Clara County, California. In the event that arbitration is found unenforceable by a court of competent jurisdiction, the parties agree that any resulting judicial lawsuit shall be filed solely and exclusively in the state or federal courts located in San Jose, California, waiving all objections to improper venue.",
+    "notes": "Contains both mandatory arbitration and exclusive forum selection."
+  },
+  {
+    "id": 10,
+    "name": "Multi-flag: Unilateral Change & Termination",
+    "categories": ["unilateral_change", "unilateral_termination"],
+    "text": "We reserve the right to modify these Terms, introduce new usage fees, or adjust service quotas at any moment without prior notice. Furthermore, we may terminate or suspend your account and access to the Service at will, with or without cause, effective immediately upon our internal determination.",
+    "notes": "Contains both unilateral modification of terms and unilateral termination at will."
+  },
+  {
+    "id": 11,
+    "name": "Multi-flag: Browsewrap & Liability Disclaimer",
+    "categories": ["contract_by_using", "limitation_of_liability"],
+    "text": "By merely browsing this site or downloading any material, you enter into a binding legal contract with the operator. In no event shall the operator be liable for any loss of data, security compromise, or financial damage resulting from your use of this site, and all warranties are expressly disclaimed to the maximum legal limit.",
+    "notes": "Combines contract by using and broad limitation of liability."
+  },
+  {
+    "id": 12,
+    "name": "Clean / Fair: Balanced Content License & Refund",
+    "categories": [],
+    "text": "You retain full copyright and intellectual property ownership of all content that you upload or publish to the Service. You grant us only a limited, non-exclusive license strictly necessary to host and display your content to your designated recipients. If we increase recurring subscription prices, we will provide you with at least thirty (30) days advance email notification, and you may cancel your subscription at any time for a prorated refund of any unused balance.",
+    "notes": "Clean / fair clause with reasonable notice and consumer protections."
+  },
+  {
+    "id": 13,
+    "name": "Clean / Fair: Data Portability & Deletion Rights",
+    "categories": [],
+    "text": "You may at any time export a complete copy of your personal data and uploaded files in standard, machine-readable formats (JSON or CSV) through your account dashboard. Upon receiving a written account deletion request from you, we will permanently purge all personal information and stored documents within fourteen (14) business days, except where retention is strictly mandated by applicable statutory law. We never sell your personal data to third parties.",
+    "notes": "Clean / fair clause respecting data portability and user privacy."
+  },
+  {
+    "id": 14,
+    "name": "Clean / Fair: Mutual Informal Dispute Resolution",
+    "categories": [],
+    "text": "Before initiating any formal legal claim against each other, both you and the Company agree to attempt in good faith to resolve any dispute through informal discussions for a period of at least thirty (30) calendar days. If the dispute cannot be resolved informally, either party may file a claim in the small claims court or municipal court of competent jurisdiction located in your county of residence. Each party shall bear their own ordinary legal expenses unless the court orders otherwise under applicable consumer statutes.",
+    "notes": "Clean / fair clause with mutual informal dispute resolution and local court access."
+  }
+]
